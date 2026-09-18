@@ -1,0 +1,119 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geoips-mcidas"
+version = "0.1.0"
+description = "GeoIPS output formatter writing McIDAS AREA files for CLAVR-x SEVIRI ingest"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+authors = [{ name = "Gwyn Uttmark", email = "gwyn.uttmark@colostate.edu" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Typing :: Typed",
+]
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+# geoips is deliberately NOT a hard dependency. The AREA writer core is
+# importable and testable on its own, which keeps the binary-format unit tests
+# runnable in CI without the whole scientific stack.
+geoips = ["geoips>=1.20.0", "xarray>=2025.3.1"]
+lint = ["ruff", "mypy", "pre-commit"]
+test = ["pytest", "pytest-cov", "pytest-timeout"]
+
+[project.entry-points."geoips.plugin_packages"]
+geoips_mcidas = "geoips_mcidas"
+
+[project.urls]
+Repository = "https://github.com/CIRA-GEOIPS/geoips_mcidas"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geoips_mcidas"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",  # pycodestyle and Pyflakes
+    "I",            # isort
+    "N",            # PEP8 naming
+    "D",            # pydocstyle
+    "UP",           # pyupgrade
+    "B",            # flake8-bugbear
+    "C4",           # flake8-comprehensions
+    "SIM",          # flake8-simplify
+    "ARG",          # flake8-unused-arguments
+    "ERA",          # eradicate
+    "PL",           # Pylint
+    "RUF",          # Ruff-specific rules
+    "TC",           # flake8-type-checking
+    "S",            # flake8-bandit (security)
+    "A",            # flake8-builtins
+    "COM",          # flake8-commas
+    "PT",           # flake8-pytest-style
+    "PTH",          # flake8-use-pathlib
+    "TRY",          # tryceratops (exception handling)
+]
+ignore = [
+    "D203",    # one-blank-line-before-class (conflicts with D211)
+    "D212",    # multi-line-summary-first-line (conflicts with D213)
+    "TRY003",
+    "COM812",  # trailing-comma-missing (conflicts with ruff format)
+]
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 5
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*" = ["S101", "PLR2004", "D"]
+"__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["geoips.*", "xarray.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "golden: compares output against a real McIDAS-produced AREA file",
+]
