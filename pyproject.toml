@@ -95,8 +95,10 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "lf"
 
+# numpy ships stubs using 3.12 type syntax, so mypy must parse as 3.12.
+# Runtime support is still 3.11+, which CI exercises via the pytest matrix.
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
