@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
 from geoips.interfaces.class_based.output_formatters import BaseOutputFormatterPlugin
@@ -28,6 +28,8 @@ from geoips_mcidas.area.directory import SeviriAreaMetadata
 from geoips_mcidas.area.filenames import build_area_filename
 
 if TYPE_CHECKING:
+    from collections.abc import Hashable, Mapping
+
     import xarray as xr
     from numpy.typing import NDArray
 
@@ -74,7 +76,7 @@ def collect_counts(dataset: xr.Dataset) -> dict[int, NDArray[np.integer]]:
     }
 
 
-def scene_from_attrs(attrs: dict[str, object]) -> SeviriScene:
+def scene_from_attrs(attrs: Mapping[Hashable, Any]) -> SeviriScene:
     """Build scene metadata from a dataset's attributes.
 
     Raises
@@ -91,14 +93,20 @@ def scene_from_attrs(attrs: dict[str, object]) -> SeviriScene:
         raise KeyError(f"input is missing required attributes: {missing}")
     return SeviriScene(
         platform_name=str(attrs[PLATFORM_ATTR]),
-        observation_time=attrs[START_TIME_ATTR],  # type: ignore[arg-type]
-        sub_satellite_longitude_east=float(attrs[SUB_LON_ATTR]),  # type: ignore[arg-type]
+        observation_time=attrs[START_TIME_ATTR],
+        sub_satellite_longitude_east=float(attrs[SUB_LON_ATTR]),
         creation_time=datetime.now(tz=UTC),
     )
 
 
 def check_band_coverage(available: set[int]) -> None:
-    """Decide whether a partial set of bands may be written.
+    """Require every band CLAVR-x reads to be present before writing any.
+
+    CLAVR-x receives only the band-1 filename and derives the other ten by
+    string splice. A band we skip becomes a file it cannot open, and its
+    reader calls ``exit(EXIT_FAILURE)`` partway through a run -- reporting a
+    filename that nothing ever wrote. Failing here instead names the missing
+    bands while the cause is still visible.
 
     Parameters
     ----------
@@ -108,10 +116,14 @@ def check_band_coverage(available: set[int]) -> None:
     Raises
     ------
     MissingBandsError
-        If the set of bands is not acceptable to write.
+        If any of bands 1-11 is absent.
     """
-    # TODO(human): implement the missing-band policy.
-    raise NotImplementedError
+    missing = sorted(set(CLAVRX_BANDS) - available)
+    if missing:
+        raise MissingBandsError(
+            f"SEVIRI input is missing band(s) {missing}; CLAVR-x requires all "
+            f"of {list(CLAVRX_BANDS)} and fails at runtime on any it cannot open",
+        )
 
 
 def write_seviri_bands(
@@ -199,8 +211,8 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
         resolved = scene or scene_from_attrs(attrs)
         written = write_seviri_bands(
             counts,
-            list(attrs[GAINS_ATTR]),  # type: ignore[call-overload]
-            list(attrs[OFFSETS_ATTR]),  # type: ignore[call-overload]
+            list(attrs[GAINS_ATTR]),
+            list(attrs[OFFSETS_ATTR]),
             resolved,
             Path(output_directory),
         )
