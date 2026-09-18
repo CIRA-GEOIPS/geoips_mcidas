@@ -1,1 +1,0 @@
-"""GeoIPS plugin namespace package."""

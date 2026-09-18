@@ -84,7 +84,9 @@ max-complexity = 5
 ban-relative-imports = "all"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*" = ["S101", "PLR2004", "D"]
+# Tests assert, use magic numbers as fixtures, and import types at runtime
+# for annotations; a TYPE_CHECKING block per test file is pure noise.
+"tests/**/*" = ["S101", "PLR2004", "D", "TC"]
 "__init__.py" = ["F401"]
 
 [tool.ruff.format]
