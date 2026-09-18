@@ -47,3 +47,38 @@ def reference_directory(reference_area: Path) -> bytes:
     """The 256-byte directory block of the reference file."""
     with reference_area.open("rb") as handle:
         return handle.read(256)
+
+
+DEFAULT_HRIT_DIR = (
+    Path(__file__).resolve().parents[2] / "recast_MSG" / "prog" / "sample_hrit"
+)
+"""The HRIT segments McIDAS converted into the reference AREA file."""
+
+HRIT_ENV_VAR = "GEOIPS_MCIDAS_SAMPLE_HRIT"
+
+
+@pytest.fixture(scope="session")
+def sample_hrit() -> Path:
+    """Directory of HRIT files matching the reference AREA file exactly.
+
+    Same platform, same minute -- which is what makes a pixel-for-pixel
+    comparison between our output and McIDAS's meaningful.
+    """
+    override = os.environ.get(HRIT_ENV_VAR)
+    candidate = Path(override) if override else DEFAULT_HRIT_DIR
+    if not candidate.is_dir():
+        pytest.skip(f"sample HRIT not found; set {HRIT_ENV_VAR} to enable")
+    return candidate
+
+
+@pytest.fixture(scope="session")
+def sample_counts(sample_hrit: Path) -> object:
+    """Counts read once per session.
+
+    Decompressing and 10-bit-unpacking 90 HRIT segments takes tens of
+    seconds; every golden test in the suite can share one result.
+    """
+    pytest.importorskip("geoips")
+    from geoips_mcidas.seviri.counts import read_seviri_counts
+
+    return read_seviri_counts(sample_hrit.glob("H-*"))

@@ -1,0 +1,122 @@
+"""Reading raw counts out of HRIT, checked against real McIDAS output.
+
+These are the tests that matter most. Every other check verifies that we can
+lay bytes out correctly; these verify that the bytes are the *right* ones.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+pytest.importorskip("geoips")
+from geoips_mcidas.seviri import counts as seviri_counts
+
+FULL_DISK = 3712
+NARROWBAND_COUNT = 11
+REFERENCE_DATA_OFFSET = 2368
+REFERENCE_PREFIX_BYTES = 12
+
+
+def reference_band_plane(area_path: Path, band: int) -> np.ndarray:
+    """Extract one band from the multi-band reference file.
+
+    Data is band-interleaved by pixel, behind a 12-byte per-line band list, so
+    a band is a strided view rather than a contiguous block.
+    """
+    line_words = (REFERENCE_PREFIX_BYTES + FULL_DISK * NARROWBAND_COUNT * 2) // 2
+    mapped = np.memmap(
+        area_path,
+        dtype="<u2",
+        mode="r",
+        offset=REFERENCE_DATA_OFFSET,
+        shape=(FULL_DISK, line_words),
+    )
+    start = REFERENCE_PREFIX_BYTES // 2 + (band - 1)
+    return np.ascontiguousarray(mapped[:, start::NARROWBAND_COUNT])
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("msg1", "meteosat-8"),
+        ("msg2", "meteosat-9"),
+        ("msg3", "meteosat-10"),
+        ("MSG4", "meteosat-11"),
+        ("msg2_iodc", "meteosat-9"),
+    ],
+)
+def test_platform_names(tag: str, expected: str) -> None:
+    assert seviri_counts.platform_name(tag) == expected
+
+
+def test_unknown_platform_is_rejected() -> None:
+    with pytest.raises(KeyError, match="msg9"):
+        seviri_counts.platform_name("msg9")
+
+
+def test_hrv_is_excluded() -> None:
+    """CLAVR-x never reads HRV and its grid differs from the narrowbands."""
+    assert 12 not in seviri_counts.NARROWBAND_BANDS
+    assert len(seviri_counts.NARROWBAND_BANDS) == NARROWBAND_COUNT
+
+
+def test_missing_prologue_is_reported(tmp_path: Path) -> None:
+    with pytest.raises(seviri_counts.SeviriHritError, match="prologue"):
+        seviri_counts.read_seviri_counts(tmp_path.glob("*"))
+
+
+@pytest.mark.golden
+def test_reads_every_narrowband(sample_counts: seviri_counts.SeviriCounts) -> None:
+    result = sample_counts
+    assert sorted(result.counts) == list(range(1, 12))
+    assert all(
+        image.shape == (FULL_DISK, FULL_DISK) for image in result.counts.values()
+    )
+    assert result.platform_name == "meteosat-11"
+    assert result.sub_satellite_longitude_east == 0.0
+
+
+@pytest.mark.golden
+def test_calibration_matches_the_reference(
+    sample_counts: seviri_counts.SeviriCounts,
+) -> None:
+    """The gains we read must be the gains McIDAS wrote into its cal block."""
+    result = sample_counts
+    assert len(result.gains) == 12
+    assert result.gains[0] == pytest.approx(0.021240899339318275)
+    assert result.offsets[0] == pytest.approx(-1.083285866305232)
+    assert result.gains[8] == pytest.approx(0.2050356762076601)
+
+
+@pytest.mark.golden
+@pytest.mark.parametrize("band", [1, 5, 9, 11])
+def test_counts_match_mcidas_pixel_for_pixel(
+    sample_counts: seviri_counts.SeviriCounts,
+    reference_area: Path,
+    band: int,
+) -> None:
+    """The decisive test: our counts must equal McIDAS's, exactly.
+
+    This is what pins the row order down. HRIT segment 1 is the southernmost
+    strip, so stacking segments ascending gives a south-up image while AREA
+    stores north-up. Without the flip roughly a quarter of pixels coincide --
+    enough for an image to look plausible and be upside down.
+    """
+    np.testing.assert_array_equal(
+        sample_counts.counts[band],
+        reference_band_plane(reference_area, band),
+    )
+
+
+@pytest.mark.golden
+def test_unflipped_counts_would_not_match(
+    sample_counts: seviri_counts.SeviriCounts,
+    reference_area: Path,
+) -> None:
+    """Guards the guard: confirm the flip is doing real work."""
+    result = sample_counts
+    expected = reference_band_plane(reference_area, 9)
+    assert not np.array_equal(np.flipud(result.counts[9]), expected)
