@@ -109,7 +109,7 @@ class McidasAreaOutputCheckerPlugin(BaseOutputCheckerPlugin):
         int
             0 when every comparison succeeded.
         """
-        return self.compare_outputs(compare_path, output_products)
+        return int(self.compare_outputs(compare_path, output_products))
 
 
 PLUGIN_CLASS = McidasAreaOutputCheckerPlugin
