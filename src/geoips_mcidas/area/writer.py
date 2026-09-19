@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
     from geoips_mcidas.area.directory import SeviriAreaMetadata
 
+COUNT_MAX: Final = 0xFFFF
+"""Widest value a two-byte AREA element can hold. SEVIRI counts are 10-bit."""
+
 COUNT_DTYPE: Final = np.dtype("<u2")
 """Counts are unsigned 16-bit, little-endian.
 
@@ -65,6 +68,15 @@ def encode_counts(counts: NDArray[np.integer]) -> bytes:
     """
     if counts.ndim != 2:  # noqa: PLR2004
         raise ValueError(f"expected a 2-D image, got shape {counts.shape}")
+    # A dtype cast wraps silently, and a wrapped count is calibrated by
+    # CLAVR-x as a real measurement. SEVIRI counts are 10-bit, so anything
+    # outside the unsigned 16-bit range is a bug upstream, not data.
+    low, high = int(counts.min()), int(counts.max())
+    if low < 0 or high > COUNT_MAX:
+        raise ValueError(
+            f"counts outside 0..{COUNT_MAX} (saw {low}..{high}); "
+            "writing them would wrap silently",
+        )
     return np.ascontiguousarray(counts, dtype=COUNT_DTYPE).tobytes()
 
 
@@ -157,7 +169,17 @@ def write_area_file(
         The path written, for convenience in building output lists.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(build_area_file(meta, nav_block, cal_block, counts))
+    contents = build_area_file(meta, nav_block, cal_block, counts)
+    # Rename into place rather than writing in place. A 27 MB write is not
+    # instantaneous, and the directory block lands first: a poller that globs
+    # the output directory would otherwise find a file that parses as a valid
+    # AREA file while most of its pixels are still missing.
+    tmp = path.with_name(f".{path.name}.partial")
+    try:
+        tmp.write_bytes(contents)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return path
 
 

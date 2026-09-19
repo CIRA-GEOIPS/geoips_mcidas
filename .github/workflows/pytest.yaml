@@ -14,8 +14,32 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Run unit tests
+      - name: Run tests that need no reference data
         timeout-minutes: 10
-        # Golden tests need the 303 MB reference AREA file, which is not in the
-        # repo; they deselect themselves when it is absent.
-        run: uv run --extra test pytest -v
+        # Golden tests compare against a 303 MB McIDAS AREA file and the HRIT
+        # scene that produced it. Neither is in the repository, so they
+        # deselect themselves here; the golden job below covers them.
+        run: uv run --extra test --extra geoips pytest -v -m "not golden"
+  golden:
+    # Runs only where the reference data is reachable. Skipping silently is the
+    # failure this job exists to prevent, so it asserts the tests were selected.
+    runs-on: self-hosted
+    if: ${{ vars.GEOIPS_MCIDAS_REFERENCE_AREA != '' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v5
+      - name: Confirm golden tests are selected
+        env:
+          GEOIPS_MCIDAS_REFERENCE_AREA: ${{ vars.GEOIPS_MCIDAS_REFERENCE_AREA }}
+          GEOIPS_MCIDAS_SAMPLE_HRIT: ${{ vars.GEOIPS_MCIDAS_SAMPLE_HRIT }}
+        run: |
+          count=$(uv run --extra test --extra geoips pytest -m golden --collect-only -q \
+            | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "golden tests collected: $count"
+          test "$count" -gt 0
+      - name: Run golden tests
+        timeout-minutes: 30
+        env:
+          GEOIPS_MCIDAS_REFERENCE_AREA: ${{ vars.GEOIPS_MCIDAS_REFERENCE_AREA }}
+          GEOIPS_MCIDAS_SAMPLE_HRIT: ${{ vars.GEOIPS_MCIDAS_SAMPLE_HRIT }}
+        run: uv run --extra test --extra geoips pytest -v -m golden

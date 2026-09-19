@@ -50,7 +50,7 @@ def test_plugin_is_datatree_native() -> None:
 
 def test_writes_one_file_per_band(tmp_path: Path) -> None:
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
-    tree = plugin(build_tree(), tmp_path)
+    tree = plugin(build_tree(), tmp_path, allow_subset=True)
     written = tree.attrs["output_products"]
     assert len(written) == 11
     assert sorted(p.name for p in tmp_path.glob("*.area")) == sorted(
@@ -62,7 +62,7 @@ def test_records_output_products_on_the_tree(tmp_path: Path) -> None:
     """A family-less plugin hands results to the procflow this way; returning
     a plain list instead drops them silently."""
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
-    tree = plugin(build_tree(), tmp_path)
+    tree = plugin(build_tree(), tmp_path, allow_subset=True)
     assert isinstance(tree, xr.DataTree)
     assert Path(tree.attrs["output_products"][0]).name == "met11_1_2021_141_0100.area"
 
@@ -70,14 +70,14 @@ def test_records_output_products_on_the_tree(tmp_path: Path) -> None:
 def test_all_bands_land_in_one_directory(tmp_path: Path) -> None:
     """CLAVR-x prepends a single input path to every derived sibling name."""
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
-    tree = plugin(build_tree(), tmp_path)
+    tree = plugin(build_tree(), tmp_path, allow_subset=True)
     parents = {Path(p).parent for p in tree.attrs["output_products"]}
     assert parents == {tmp_path}
 
 
 def test_written_files_are_readable_area_files(tmp_path: Path) -> None:
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
-    tree = plugin(build_tree(), tmp_path)
+    tree = plugin(build_tree(), tmp_path, allow_subset=True)
     band_1 = Path(tree.attrs["output_products"][0])
     block = band_1.read_bytes()[: words.DIRECTORY_BYTES]
     unpacked = words.unpack_words(block)
@@ -90,7 +90,7 @@ def test_written_files_are_readable_area_files(tmp_path: Path) -> None:
 def test_band_counts_round_trip(tmp_path: Path) -> None:
     """Each file must hold its own band's counts, not another's."""
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
-    tree = plugin(build_tree(), tmp_path)
+    tree = plugin(build_tree(), tmp_path, allow_subset=True)
     for path in map(Path, tree.attrs["output_products"]):
         band = int(path.name.split("_")[1])
         payload = path.read_bytes()[directory.DATA_OFFSET :]
@@ -115,7 +115,7 @@ def test_missing_bands_fail_before_writing(
     wrote. Failing here names the bands instead."""
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
     with pytest.raises(mcidas_area_seviri.MissingBandsError, match=r"\[1"):
-        plugin(build_tree(present), tmp_path)
+        plugin(build_tree(present), tmp_path, allow_subset=True)
     assert list(tmp_path.glob("*.area")) == []
     with pytest.raises(mcidas_area_seviri.MissingBandsError) as excinfo:
         mcidas_area_seviri.check_band_coverage(set(present))
@@ -131,7 +131,7 @@ def test_missing_attributes_are_named(tmp_path: Path) -> None:
     del tree.attrs[mcidas_area_seviri.SUB_LON_ATTR]
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
     with pytest.raises(KeyError, match="longitude_of_projection_origin"):
-        plugin(tree, tmp_path)
+        plugin(tree, tmp_path, allow_subset=True)
 
 
 def build_multi_input(tree: xr.DataTree) -> xr.DataTree:
@@ -156,7 +156,7 @@ def test_finds_counts_under_the_obp_multi_input_wrapper(tmp_path: Path) -> None:
     wrapper = build_multi_input(build_tree())
     assert list(wrapper.to_dataset().data_vars) == []
 
-    result = plugin(wrapper, tmp_path, _obp_initiated=True)
+    result = plugin(wrapper, tmp_path, allow_subset=True, _obp_initiated=True)
     assert len(result.attrs["output_products"]) == 11
 
 
@@ -173,3 +173,32 @@ def test_resolver_falls_back_to_the_root_when_nothing_has_counts() -> None:
     empty = xr.DataTree(name="multi_input")
     empty["reader"] = xr.DataTree(dataset=xr.Dataset(), name="reader")
     assert list(mcidas_area_seviri.resolve_counts_dataset(empty).data_vars) == []
+
+
+def test_a_subset_is_refused_by_default(tmp_path: Path) -> None:
+    """CLAVR-x hard-codes full-disk navigation, so a subset is mis-navigated
+    silently rather than rejected."""
+    plugin = mcidas_area_seviri.PLUGIN_CLASS()
+    with pytest.raises(ValueError, match="full-disk"):
+        plugin(build_tree(), tmp_path)
+    assert list(tmp_path.glob("*.area")) == []
+
+
+def test_band_one_is_written_last(tmp_path: Path) -> None:
+    """The band-1 file is what a downstream poller keys on, so it must not
+    appear until the other ten exist."""
+    order: list[int] = []
+    real = mcidas_area_seviri.writer.write_area_file
+
+    def record(path: Path, meta: object, *args: object) -> Path:
+        order.append(meta.band)  # type: ignore[attr-defined]
+        return real(path, meta, *args)  # type: ignore[arg-type]
+
+    mcidas_area_seviri.writer.write_area_file = record  # type: ignore[assignment]
+    try:
+        mcidas_area_seviri.PLUGIN_CLASS()(build_tree(), tmp_path, allow_subset=True)
+    finally:
+        mcidas_area_seviri.writer.write_area_file = real  # type: ignore[assignment]
+
+    assert order[-1] == 1
+    assert sorted(order) == list(range(1, 12))

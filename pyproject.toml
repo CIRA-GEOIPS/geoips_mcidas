@@ -27,7 +27,9 @@ dependencies = ["numpy>=1.24"]
 # runnable in CI without the whole scientific stack.
 geoips = ["geoips>=1.20.0", "xarray>=2025.3.1"]
 lint = ["ruff", "mypy", "pre-commit"]
-test = ["pytest", "pytest-cov", "pytest-timeout"]
+# pyyaml is a test dependency: tests/test_workflow.py parses the shipped
+# workflow YAML. It is not a transitive dependency of pytest.
+test = ["pytest", "pytest-cov", "pytest-timeout", "pyyaml"]
 
 [project.entry-points."geoips.plugin_packages"]
 geoips_mcidas = "geoips_mcidas"
@@ -122,6 +124,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Without --strict-markers a typo'd @pytest.mark.golden silently registers a new
+# marker and the test drops out of the golden selection unnoticed.
+addopts = "--strict-markers"
 markers = [
     "golden: compares output against a real McIDAS-produced AREA file",
 ]

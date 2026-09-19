@@ -25,7 +25,11 @@ from geoips.interfaces.class_based.output_formatters import (
 )
 
 from geoips_mcidas.area import msg_cal, msgt_nav, writer
-from geoips_mcidas.area.directory import SeviriAreaMetadata
+from geoips_mcidas.area.directory import (
+    FULL_DISK_ELEMENTS,
+    FULL_DISK_LINES,
+    SeviriAreaMetadata,
+)
 from geoips_mcidas.area.filenames import build_area_filename
 from geoips_mcidas.seviri.scene import SeviriScene
 
@@ -156,6 +160,31 @@ def check_band_coverage(available: set[int]) -> None:
         )
 
 
+def check_full_disk(counts: dict[int, NDArray[np.integer]]) -> None:
+    """Refuse anything that is not the full disk CLAVR-x assumes.
+
+    CLAVR-x reads the image dimensions from the directory block but navigates
+    with hard-coded full-disk constants (``COFF = LOFF = 1856``,
+    ``CFAC = LFAC = -781648343``). A subset therefore runs to completion and is
+    geolocated wrongly, with nothing reporting it.
+
+    Raises
+    ------
+    ValueError
+        If any band is not FULL_DISK x FULL_DISK.
+    """
+    wrong = {
+        band: image.shape
+        for band, image in sorted(counts.items())
+        if image.shape != (FULL_DISK_LINES, FULL_DISK_ELEMENTS)
+    }
+    if wrong:
+        raise ValueError(
+            f"CLAVR-x navigates SEVIRI with hard-coded full-disk constants, so "
+            f"only {FULL_DISK_LINES}x{FULL_DISK_ELEMENTS} may be written; got {wrong}",
+        )
+
+
 def write_seviri_bands(
     counts: dict[int, NDArray[np.integer]],
     gains: list[float],
@@ -173,8 +202,12 @@ def write_seviri_bands(
         offsets,
         msg_cal.planck_table(scene.platform_name),
     )
+    # Band 1 last. CLAVR-x is handed only the band-1 filename and derives the
+    # other ten from it, so that file appearing is what tells a downstream
+    # poller the set is ready. Writing it first advertises a scene whose other
+    # ten files do not exist yet.
     written: list[str] = []
-    for band in sorted(counts):
+    for band in sorted(counts, key=lambda b: (b == 1, b)):
         image = counts[band]
         meta = SeviriAreaMetadata(
             platform_name=scene.platform_name,
@@ -196,7 +229,12 @@ def write_seviri_bands(
         writer.write_area_file(path, meta, nav_block, cal_block, image)
         LOG.info("Wrote %s", path)
         written.append(str(path))
-    return written
+    return sorted(written, key=_band_in_name)
+
+
+def _band_in_name(path: str) -> int:
+    """Sort written paths back into band order for reporting."""
+    return int(Path(path).name.split("_")[1])
 
 
 class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
@@ -214,6 +252,7 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
         data: xr.DataTree,
         output_directory: str | Path,
         scene: SeviriScene | None = None,
+        allow_subset: bool = False,
     ) -> xr.DataTree:
         """Write per-band AREA files and record them on the tree.
 
@@ -227,6 +266,12 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
             Directory to write every band file into.
         scene
             Overrides the metadata otherwise read from the tree attributes.
+        allow_subset
+            Write an image that is not the full disk. CLAVR-x navigates SEVIRI
+            with hard-coded full-disk constants and would mis-navigate the
+            result without reporting anything, so this is off by default. Turn
+            it on only when the files are for a reader that takes navigation
+            from the file, such as McIDAS-V.
 
         Returns
         -------
@@ -239,6 +284,8 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
         attrs = dict(data.attrs) | dict(dataset.attrs)
         counts = collect_counts(dataset)
         check_band_coverage(set(counts))
+        if not allow_subset:
+            check_full_disk(counts)
 
         resolved = scene or scene_from_attrs(attrs)
         written = write_seviri_bands(
