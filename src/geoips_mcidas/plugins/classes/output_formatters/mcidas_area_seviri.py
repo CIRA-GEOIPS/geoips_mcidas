@@ -15,7 +15,6 @@ order-based procflow only, since ``single_source`` dispatches on ``family``.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -26,6 +25,7 @@ from geoips.interfaces.class_based.output_formatters import BaseOutputFormatterP
 from geoips_mcidas.area import msg_cal, msgt_nav, writer
 from geoips_mcidas.area.directory import SeviriAreaMetadata
 from geoips_mcidas.area.filenames import build_area_filename
+from geoips_mcidas.seviri.scene import SeviriScene
 
 if TYPE_CHECKING:
     from collections.abc import Hashable, Mapping
@@ -50,16 +50,6 @@ START_TIME_ATTR: Final = "start_datetime"
 
 class MissingBandsError(ValueError):
     """Raised when the input does not carry every band CLAVR-x requires."""
-
-
-@dataclass(frozen=True)
-class SeviriScene:
-    """Scene-level metadata shared by every band file of one observation."""
-
-    platform_name: str
-    observation_time: datetime
-    sub_satellite_longitude_east: float
-    creation_time: datetime
 
 
 def count_variable(band: int) -> str:
