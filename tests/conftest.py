@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,18 @@ def sample_counts(sample_hrit: Path) -> object:
     from geoips_mcidas.seviri.counts import read_seviri_counts
 
     return read_seviri_counts(sample_hrit.glob("H-*"))
+
+
+def require_free_bytes(path: Path, needed: int) -> None:
+    """Skip a test when the filesystem cannot hold what it would write.
+
+    A full-disk SEVIRI band is about 28 MB and a whole scene is eleven of
+    them, so these tests can genuinely exhaust a tight volume. Skipping is
+    better than failing with a disk error that looks like a code fault.
+    """
+    usage = shutil.disk_usage(path)
+    if usage.free < needed:
+        pytest.skip(
+            f"needs {needed / 1e6:.0f} MB free, only "
+            f"{usage.free / 1e6:.0f} MB available",
+        )

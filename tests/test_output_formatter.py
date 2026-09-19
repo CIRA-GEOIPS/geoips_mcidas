@@ -13,7 +13,7 @@ mcidas_area_seviri = pytest.importorskip(
     "geoips_mcidas.plugins.classes.output_formatters.mcidas_area_seviri",
 )
 
-from geoips_mcidas.area import directory, words  # noqa: E402
+from geoips_mcidas.area import directory, words
 
 OBSERVED = datetime(2021, 5, 21, 1, 0, tzinfo=UTC)
 SMALL = 4

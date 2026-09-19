@@ -88,8 +88,9 @@ ban-relative-imports = "all"
 # for annotations; a TYPE_CHECKING block per test file is pure noise.
 # Tests assert, use magic numbers as fixtures, import types at runtime for
 # annotations, and defer optional-dependency imports until importorskip has
-# had a chance to run.
-"tests/**/*" = ["S101", "PLR2004", "D", "TC", "PLC0415"]
+# had a chance to run -- which also means some imports follow
+# pytest.importorskip rather than sitting at the top of the file.
+"tests/**/*" = ["S101", "PLR2004", "D", "TC", "PLC0415", "E402"]
 "__init__.py" = ["F401"]
 
 [tool.ruff.format]
