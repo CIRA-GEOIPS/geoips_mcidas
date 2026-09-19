@@ -28,18 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v5
-      - name: Confirm golden tests are selected
-        env:
-          GEOIPS_MCIDAS_REFERENCE_AREA: ${{ vars.GEOIPS_MCIDAS_REFERENCE_AREA }}
-          GEOIPS_MCIDAS_SAMPLE_HRIT: ${{ vars.GEOIPS_MCIDAS_SAMPLE_HRIT }}
-        run: |
-          count=$(uv run --extra test --extra geoips pytest -m golden --collect-only -q \
-            | tail -1 | grep -oE '^[0-9]+' || echo 0)
-          echo "golden tests collected: $count"
-          test "$count" -gt 0
       - name: Run golden tests
         timeout-minutes: 30
         env:
           GEOIPS_MCIDAS_REFERENCE_AREA: ${{ vars.GEOIPS_MCIDAS_REFERENCE_AREA }}
           GEOIPS_MCIDAS_SAMPLE_HRIT: ${{ vars.GEOIPS_MCIDAS_SAMPLE_HRIT }}
+          # Turns a missing reference into a failure rather than a skip.
+          # Asserting on collection is not enough: the fixtures skip at run
+          # time, so an unreachable reference still exits 0.
+          GEOIPS_MCIDAS_STRICT_GOLDEN: '1'
         run: uv run --extra test --extra geoips pytest -v -m golden

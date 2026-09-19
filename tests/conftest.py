@@ -11,6 +11,22 @@ import pytest
 REFERENCE_ENV_VAR = "GEOIPS_MCIDAS_REFERENCE_AREA"
 """Overrides the search for the reference file, e.g. in CI."""
 
+STRICT_ENV_VAR = "GEOIPS_MCIDAS_STRICT_GOLDEN"
+"""Set in CI: a configured reference that is missing is an error, not a skip.
+
+Without it the golden job is green when the data is unreachable, which is the
+exact failure the job exists to catch.
+"""
+
+
+def _missing(what: str, env_var: str) -> None:
+    """Skip, or fail when the caller said the data must be there."""
+    message = f"{what} not found; set {env_var} to enable"
+    if os.environ.get(STRICT_ENV_VAR):
+        pytest.fail(f"{message} (strict mode via {STRICT_ENV_VAR})")
+    pytest.skip(message)
+
+
 DEFAULT_REFERENCE = (
     Path(__file__).resolve().parents[2]
     / "recast_MSG"
@@ -37,9 +53,7 @@ def reference_area() -> Path:
     """
     path = _reference_path()
     if path is None:
-        pytest.skip(
-            f"reference AREA file not found; set {REFERENCE_ENV_VAR} to enable",
-        )
+        _missing("reference AREA file", REFERENCE_ENV_VAR)
     return path
 
 
@@ -68,7 +82,7 @@ def sample_hrit() -> Path:
     override = os.environ.get(HRIT_ENV_VAR)
     candidate = Path(override) if override else DEFAULT_HRIT_DIR
     if not candidate.is_dir():
-        pytest.skip(f"sample HRIT not found; set {HRIT_ENV_VAR} to enable")
+        _missing("sample HRIT", HRIT_ENV_VAR)
     return candidate
 
 

@@ -160,6 +160,37 @@ def check_band_coverage(available: set[int]) -> None:
         )
 
 
+def resolve_output_directory(output_directory: str | Path) -> Path:
+    """Reject an output directory that is not a real absolute path.
+
+    pluginify resolves a workflow's ``!ENV`` tag with ``os.path.expandvars``,
+    which leaves an unset ``${VAR}`` as literal text rather than raising. GeoIPS
+    announces a default for ``GEOIPS_OUTDIRS`` but does not put it in the
+    environment, so unset is a fully supported state the YAML cannot see. Left
+    alone, ``mkdir(parents=True)`` would create a directory literally named
+    ``${GEOIPS_OUTDIRS}`` relative to the process working directory -- which
+    under cron is not the operator's shell -- write 300 MB into it, and report
+    eleven output products at a path CLAVR-x will never look in.
+
+    Raises
+    ------
+    ValueError
+        If the path still contains an unexpanded variable, or is relative.
+    """
+    resolved = Path(output_directory)
+    if "$" in str(resolved):
+        raise ValueError(
+            f"output_directory contains an unexpanded variable: {resolved}. "
+            "Set the environment variable the workflow references.",
+        )
+    if not resolved.is_absolute():
+        raise ValueError(
+            f"output_directory must be absolute, got {resolved}; "
+            "a relative path resolves against the process working directory",
+        )
+    return resolved
+
+
 def check_full_disk(counts: dict[int, NDArray[np.integer]]) -> None:
     """Refuse anything that is not the full disk CLAVR-x assumes.
 
@@ -206,8 +237,23 @@ def write_seviri_bands(
     # other ten from it, so that file appearing is what tells a downstream
     # poller the set is ready. Writing it first advertises a scene whose other
     # ten files do not exist yet.
+    #
+    # Filenames carry no run identity, so on a re-run -- a backfill, or a
+    # re-disseminated segment -- band 1 from the previous run would be present
+    # throughout, and the readiness signal would be a lie for the whole of the
+    # second run. Remove it first so its presence always means this run
+    # finished.
+    ordered = sorted(counts, key=lambda b: (b == 1, b))
+    if 1 in counts:
+        first = output_directory / build_area_filename(
+            scene.platform_name,
+            scene.observation_time,
+            1,
+        )
+        first.unlink(missing_ok=True)
+
     written: list[str] = []
-    for band in sorted(counts, key=lambda b: (b == 1, b)):
+    for band in ordered:
         image = counts[band]
         meta = SeviriAreaMetadata(
             platform_name=scene.platform_name,
@@ -282,6 +328,7 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
         """
         dataset = resolve_counts_dataset(data)
         attrs = dict(data.attrs) | dict(dataset.attrs)
+        target = resolve_output_directory(output_directory)
         counts = collect_counts(dataset)
         check_band_coverage(set(counts))
         if not allow_subset:
@@ -293,7 +340,7 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
             list(attrs[GAINS_ATTR]),
             list(attrs[OFFSETS_ATTR]),
             resolved,
-            Path(output_directory),
+            target,
         )
         data.attrs["output_products"] = written
         return data

@@ -12,6 +12,9 @@ against a reference file.
 
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import numpy as np
@@ -28,8 +31,6 @@ from geoips_mcidas.area.msg_cal import CAL_BLOCK_BYTES
 from geoips_mcidas.area.msgt_nav import NAV_BLOCK_BYTES
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from numpy.typing import NDArray
 
     from geoips_mcidas.area.directory import SeviriAreaMetadata
@@ -68,9 +69,15 @@ def encode_counts(counts: NDArray[np.integer]) -> bytes:
     """
     if counts.ndim != 2:  # noqa: PLR2004
         raise ValueError(f"expected a 2-D image, got shape {counts.shape}")
-    # A dtype cast wraps silently, and a wrapped count is calibrated by
-    # CLAVR-x as a real measurement. SEVIRI counts are 10-bit, so anything
-    # outside the unsigned 16-bit range is a bug upstream, not data.
+    # A dtype cast both wraps and truncates silently, and either way CLAVR-x
+    # calibrates the result as a real measurement. Testing only the range
+    # would be blind to truncation: a float array of 123.9 is in range and
+    # becomes 123. Require an integer dtype, then check the range.
+    if not np.issubdtype(counts.dtype, np.integer):
+        raise ValueError(
+            f"counts must be an integer dtype, got {counts.dtype}; "
+            "a float array would be truncated silently",
+        )
     low, high = int(counts.min()), int(counts.max())
     if low < 0 or high > COUNT_MAX:
         raise ValueError(
@@ -174,12 +181,28 @@ def write_area_file(
     # instantaneous, and the directory block lands first: a poller that globs
     # the output directory would otherwise find a file that parses as a valid
     # AREA file while most of its pixels are still missing.
-    tmp = path.with_name(f".{path.name}.partial")
+    #
+    # The temporary name must be unique per writer, not derived from the
+    # destination. Two runs of the same scene -- a backfill overlapping the
+    # cron, or a retry -- would otherwise share one temp inode: both truncate
+    # it, the first to finish renames, and the loser goes on writing into the
+    # file that is now live at the published path. The process that returns
+    # successfully is then not the one whose bytes are on disk.
+    handle, name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".partial",
+    )
+    tmp = Path(name)
     try:
-        tmp.write_bytes(contents)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
         tmp.replace(path)
-    finally:
+    except BaseException:
         tmp.unlink(missing_ok=True)
+        raise
     return path
 
 

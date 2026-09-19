@@ -136,7 +136,7 @@ def test_a_missing_segment_is_rejected(sample_hrit: Path) -> None:
     dropped = next(f for f in files if "IR_108___-000004" in f.name)
     kept = [f for f in files if f != dropped]
 
-    with pytest.raises(seviri_counts.SeviriHritError, match="incomplete HRIT coverage"):
+    with pytest.raises(seviri_counts.SeviriHritError, match="do not tile the image"):
         seviri_counts.read_seviri_counts(kept)
 
 
@@ -150,15 +150,24 @@ def test_missing_segment_error_names_the_band(sample_hrit: Path) -> None:
 
 
 class _FakeHrit:
-    """Minimal stand-in for HritFile, so a mixed-cycle set can be built."""
+    """Minimal stand-in for HritFile, for building inconsistent scenes."""
 
-    def __init__(self, name: str, moment: datetime) -> None:
+    def __init__(
+        self,
+        name: str,
+        moment: datetime,
+        segment: int = 1,
+        platform: str = "msg4",
+    ) -> None:
         self.file_type = "image"
         self.band = "B01"
-        self.segment = 1
+        self.segment = segment
         self.compressed = False
-        self.annotation_metadata = {"start_datetime": moment, "platform": "msg4"}
-        self.metadata = {"block_1": {"num_lines": 464}}
+        self.annotation_metadata = {"start_datetime": moment, "platform": platform}
+        self.metadata = {
+            "block_1": {"num_lines": 464},
+            "block_128": {"start_segment": 1, "end_segment": 8},
+        }
         self._name = name
 
 
@@ -173,26 +182,63 @@ def test_two_observation_times_are_rejected(monkeypatch: pytest.MonkeyPatch) -> 
     second = datetime(2021, 5, 21, 1, 15)
     times = {"a": first, "b": second}
 
+    segments = {"a": 1, "b": 2}
     monkeypatch.setattr(
         seviri_counts,
         "HritFile",
-        lambda path: _FakeHrit(path, times[Path(path).name]),
+        lambda path: _FakeHrit(
+            path,
+            times[Path(path).name],
+            segment=segments[Path(path).name],
+        ),
     )
     with pytest.raises(
         seviri_counts.SeviriHritError,
-        match="more than one observation",
+        match="disagree on observation time",
     ):
+        seviri_counts.read_seviri_counts([Path("a"), Path("b")])
+
+
+def test_two_spacecraft_are_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """EUMETCast delivers the 0-degree and IODC services into one spool on the
+    same 15-minute slots, so a mixed glob passes the observation-time check."""
+    moment = datetime(2021, 5, 21, 1, 0)
+    platforms = {"a": "msg4", "b": "msg2"}
+    segments = {"a": 1, "b": 2}
+    monkeypatch.setattr(
+        seviri_counts,
+        "HritFile",
+        lambda path: _FakeHrit(
+            path,
+            moment,
+            segment=segments[Path(path).name],
+            platform=platforms[Path(path).name],
+        ),
+    )
+    with pytest.raises(seviri_counts.SeviriHritError, match="disagree on platform"):
+        seviri_counts.read_seviri_counts([Path("a"), Path("b")])
+
+
+def test_a_duplicate_segment_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    moment = datetime(2021, 5, 21, 1, 0)
+    monkeypatch.setattr(
+        seviri_counts,
+        "HritFile",
+        lambda path: _FakeHrit(path, moment, segment=1),
+    )
+    with pytest.raises(seviri_counts.SeviriHritError, match="duplicate segment"):
         seviri_counts.read_seviri_counts([Path("a"), Path("b")])
 
 
 def test_a_single_observation_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards the guard: the time check must not reject a valid scene."""
     moment = datetime(2021, 5, 21, 1, 0)
+    segments = {"a": 1, "b": 2}
     monkeypatch.setattr(
         seviri_counts,
         "HritFile",
-        lambda path: _FakeHrit(path, moment),
+        lambda path: _FakeHrit(path, moment, segment=segments[Path(path).name]),
     )
-    # No prologue in this set, so it fails on that instead of on the time.
+    # No prologue in this set, so it fails on that instead of on consistency.
     with pytest.raises(seviri_counts.SeviriHritError, match="prologue"):
         seviri_counts.read_seviri_counts([Path("a"), Path("b")])

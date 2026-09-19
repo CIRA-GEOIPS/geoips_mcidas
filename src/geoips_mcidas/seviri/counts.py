@@ -96,73 +96,116 @@ def _assemble_band(
     return np.flipud(image)
 
 
+def _reject_inconsistent(handle: HritFile, seen: dict[str, object], name: str) -> None:
+    """Require every file in a scene to agree on observation and spacecraft.
+
+    EUMETCast delivers the 0-degree service and the IODC service into the same
+    spool on the same 15-minute slots, so one glob over a mixed archive yields
+    two spacecraft whose files all share a nominal time. Segments are keyed on
+    band and segment number alone, so bands -- or strips within a band -- would
+    come from the wrong satellite while the platform, sensor-source word,
+    filename prefix and calibration block all came from whichever prologue was
+    read last.
+
+    Raises
+    ------
+    SeviriHritError
+        On the first disagreement, naming the file.
+    """
+    observed = {
+        "observation time": handle.annotation_metadata["start_datetime"],
+        "platform": handle.annotation_metadata["platform"],
+    }
+    for field, value in observed.items():
+        if field not in seen:
+            seen[field] = value
+        elif seen[field] != value:
+            raise SeviriHritError(
+                f"HRIT files disagree on {field}: {seen[field]} and {value} "
+                f"({name}). Pass the files for a single cycle of one satellite.",
+            )
+
+
 def _group_segments(
     paths: Iterable[Path],
 ) -> tuple[HritFile | None, dict[int, dict[int, HritFile]]]:
     """Split HRIT files into the prologue and per-band segment maps.
 
-    Every file must belong to the same observation. An archive directory at a
-    15-minute cadence holds many cycles, and the order GeoIPS hands filenames
-    over is whatever the glob returned, so keeping the last of each would
-    quietly assemble one image out of several scans.
-
     Raises
     ------
     SeviriHritError
-        If the files span more than one observation time, or if any segment is
-        compressed.
+        If any segment is compressed, if the files disagree on observation time
+        or spacecraft, or if a second prologue is present.
     """
     prologue: HritFile | None = None
     bands: SegmentMap = {}
-    observation = None
+    seen: dict[str, object] = {}
     for path in paths:
         handle = HritFile(str(path))
         if handle.compressed:
             raise SeviriHritError(
                 f"{path.name} is compressed; decompress the HRIT segments first",
             )
-        moment = handle.annotation_metadata["start_datetime"]
-        if observation is None:
-            observation = moment
-        elif moment != observation:
-            raise SeviriHritError(
-                f"HRIT files span more than one observation: {observation} and "
-                f"{moment} ({path.name}). Pass the files for a single cycle.",
-            )
+        _reject_inconsistent(handle, seen, path.name)
         if handle.file_type == PROLOGUE_TYPE:
+            if prologue is not None:
+                raise SeviriHritError(
+                    f"more than one HRIT prologue supplied ({path.name}); "
+                    "the calibration block would depend on file order",
+                )
             prologue = handle
         elif handle.file_type == IMAGE_TYPE and handle.band is not None:
             number = int(handle.band.removeprefix("B"))
             if number in NARROWBAND_BANDS:
-                bands.setdefault(number, {})[int(handle.segment)] = handle
+                segment = int(handle.segment)
+                if segment in bands.get(number, {}):
+                    raise SeviriHritError(
+                        f"duplicate segment {segment} for band {number} ({path.name})",
+                    )
+                bands.setdefault(number, {})[segment] = handle
     return prologue, bands
 
 
 def _check_segments_complete(bands: SegmentMap, lines: int) -> None:
-    """Require each band's segments to tile the full disk with no gaps.
+    """Require each band's segments to tile the full disk exactly.
 
-    A missing segment is the normal partial-reception failure of an EUMETCast
-    feed, and left alone it is invisible: the array is pre-allocated as zeros,
-    so the gap becomes a black stripe in a file of exactly the right size,
-    which navigates correctly, passes every structural check we have, and is
+    A missing or short segment is the normal partial-reception failure of an
+    EUMETCast feed, and left alone it is invisible: the array is pre-allocated
+    as zeros, so the gap becomes a black stripe in a file of exactly the right
+    size, which navigates correctly, passes every other check, and is
     calibrated by CLAVR-x as though the zeros were measurements.
+
+    Summing the declared line counts is not enough. ``_assemble_band`` places
+    each strip at ``num_lines * (segment - 1)`` using that segment's own
+    declared height, so heights that merely add up to the right total still
+    leave a gap and an overlap. The segment numbers must therefore be the
+    contiguous run the prologue declares, and every segment must be the same
+    height.
 
     Raises
     ------
     SeviriHritError
-        If any band's segments do not cover every line.
+        If any band's segments do not tile the image exactly.
     """
-    incomplete = {}
+    problems = {}
     for band, segments in sorted(bands.items()):
-        covered = sum(
-            int(handle.metadata["block_1"]["num_lines"]) for handle in segments.values()
+        block = next(iter(segments.values())).metadata["block_128"]
+        expected = set(
+            range(int(block["start_segment"]), int(block["end_segment"]) + 1)
         )
-        if covered != lines:
-            missing = sorted(set(range(1, max(segments) + 1)) - set(segments))
-            incomplete[band] = missing or f"{covered} of {lines} lines"
-    if incomplete:
+        if set(segments) != expected:
+            problems[band] = f"missing segments {sorted(expected - set(segments))}"
+            continue
+        heights = {
+            int(handle.metadata["block_1"]["num_lines"]) for handle in segments.values()
+        }
+        if len(heights) != 1:
+            problems[band] = f"segments differ in height: {sorted(heights)}"
+        elif heights.pop() * len(segments) != lines:
+            problems[band] = f"segments cover {len(segments)} strips, not {lines} lines"
+    if problems:
         raise SeviriHritError(
-            f"incomplete HRIT coverage; missing segments by band: {incomplete}. "
+            f"HRIT segments do not tile the image: {problems}. "
             "A gap would be written as zeros and calibrated as real data.",
         )
 

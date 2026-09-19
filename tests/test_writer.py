@@ -119,3 +119,55 @@ def test_write_area_file_creates_parents(tmp_path: Path) -> None:
     written = writer.write_area_file(target, meta, nav, cal, ramp())
     assert written == target
     assert target.stat().st_size == meta.total_bytes
+
+
+def test_rejects_a_float_array() -> None:
+    """A range check alone is blind to truncation: 123.9 is in range."""
+    with pytest.raises(ValueError, match="integer dtype"):
+        writer.encode_counts(np.full((2, 2), 123.9))
+
+
+def test_rejects_counts_above_the_element_width() -> None:
+    with pytest.raises(ValueError, match="outside 0"):
+        writer.encode_counts(np.full((2, 2), 70000, dtype=np.int32))
+
+
+def test_rejects_negative_counts() -> None:
+    with pytest.raises(ValueError, match="outside 0"):
+        writer.encode_counts(np.full((2, 2), -1, dtype=np.int32))
+
+
+def test_leaves_no_temporary_file(tmp_path: Path) -> None:
+    meta = small_metadata()
+    nav, cal = blocks()
+    writer.write_area_file(tmp_path / "a.area", meta, nav, cal, ramp())
+    assert [p.name for p in tmp_path.iterdir()] == ["a.area"]
+
+
+def test_temporary_file_is_unique_per_call(tmp_path: Path, monkeypatch) -> None:
+    """A temp name derived from the destination lets two concurrent runs share
+    one inode, so the process that returns success is not the one whose bytes
+    land on disk."""
+    seen: list[str] = []
+    real = writer.tempfile.mkstemp
+
+    def record(**kwargs: object) -> tuple[int, str]:
+        handle, name = real(**kwargs)
+        seen.append(name)
+        return handle, name
+
+    monkeypatch.setattr(writer.tempfile, "mkstemp", record)
+    meta = small_metadata()
+    nav, cal = blocks()
+    for _ in range(2):
+        writer.write_area_file(tmp_path / "a.area", meta, nav, cal, ramp())
+    assert len(set(seen)) == 2
+
+
+def test_removes_the_temporary_file_when_writing_fails(tmp_path: Path) -> None:
+    nav, cal = blocks()
+    with pytest.raises(ValueError, match="does not match metadata"):
+        writer.write_area_file(
+            tmp_path / "a.area", small_metadata(), nav, cal, ramp(2, 2)
+        )
+    assert list(tmp_path.iterdir()) == []

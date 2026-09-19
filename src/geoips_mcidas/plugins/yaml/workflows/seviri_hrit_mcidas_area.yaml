@@ -14,8 +14,7 @@ docstring: |
   channel, named so CLAVR-x can derive every sibling from the band-1 name.
 package: geoips_mcidas
 spec:
-  globals:
-    output_directory: !ENV ${GEOIPS_OUTDIRS}/seviri_area
+  globals: {}
   steps:
     reader:
       kind: reader

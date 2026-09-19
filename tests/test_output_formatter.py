@@ -202,3 +202,46 @@ def test_band_one_is_written_last(tmp_path: Path) -> None:
 
     assert order[-1] == 1
     assert sorted(order) == list(range(1, 12))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["${GEOIPS_OUTDIRS}/seviri_area", "$HOME/out", "relative/path"],
+)
+def test_rejects_an_unusable_output_directory(bad: str) -> None:
+    """pluginify leaves an unset ${VAR} as literal text, so the workflow cannot
+    see the problem and mkdir would happily create the directory."""
+    with pytest.raises(ValueError, match=r"unexpanded variable|must be absolute"):
+        mcidas_area_seviri.PLUGIN_CLASS()(build_tree(), bad, allow_subset=True)
+
+
+def test_band_one_does_not_survive_a_rerun(tmp_path: Path) -> None:
+    """Band 1's presence is the readiness signal, so a previous run's copy must
+    not stand in for this run's.
+
+    Filenames carry no run identity, so without an explicit removal a re-run
+    that dies partway leaves eleven files with band 1 present and a silent mix
+    of two runs -- in exactly the situation re-runs exist for.
+    """
+    plugin = mcidas_area_seviri.PLUGIN_CLASS()
+    plugin(build_tree(), tmp_path, allow_subset=True)
+    band_1 = tmp_path / "met11_1_2021_141_0100.area"
+    assert band_1.exists()
+
+    real = mcidas_area_seviri.writer.write_area_file
+    calls = {"n": 0}
+
+    def fail_partway(*args: object, **kwargs: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise RuntimeError("interrupted")
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    mcidas_area_seviri.writer.write_area_file = fail_partway  # type: ignore[assignment]
+    try:
+        with pytest.raises(RuntimeError, match="interrupted"):
+            plugin(build_tree(), tmp_path, allow_subset=True)
+    finally:
+        mcidas_area_seviri.writer.write_area_file = real  # type: ignore[assignment]
+
+    assert not band_1.exists(), "a stale band 1 would advertise an incomplete set"
