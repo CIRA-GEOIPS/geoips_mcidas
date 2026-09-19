@@ -4,8 +4,12 @@ GeoIPS's own ``seviri_hrit`` reader converts counts to radiance and keeps only
 the result, discarding both the counts and the prologue that holds the
 per-band slope and intercept. An AREA file for CLAVR-x needs exactly what that
 reader throws away, so this module reads the HRIT segments again for counts,
-reusing the segment decompression and prologue parsing in
+reusing the prologue parsing and segment reading in
 ``geoips.plugins.classes.readers.utils.hrit_reader``.
+
+Compressed segments are not handled. ``HritFile`` can decompress, but doing so
+needs a writable scratch directory and the EUMETSAT wavelet library, so this
+module rejects a compressed file rather than half-supporting it.
 
 **Row order.** Segment 1 of an HRIT image is the *southernmost* strip, so
 stacking segments in ascending order yields a south-up image, while AREA files
@@ -95,11 +99,36 @@ def _assemble_band(
 def _group_segments(
     paths: Iterable[Path],
 ) -> tuple[HritFile | None, dict[int, dict[int, HritFile]]]:
-    """Split HRIT files into the prologue and per-band segment maps."""
+    """Split HRIT files into the prologue and per-band segment maps.
+
+    Every file must belong to the same observation. An archive directory at a
+    15-minute cadence holds many cycles, and the order GeoIPS hands filenames
+    over is whatever the glob returned, so keeping the last of each would
+    quietly assemble one image out of several scans.
+
+    Raises
+    ------
+    SeviriHritError
+        If the files span more than one observation time, or if any segment is
+        compressed.
+    """
     prologue: HritFile | None = None
     bands: SegmentMap = {}
+    observation = None
     for path in paths:
         handle = HritFile(str(path))
+        if handle.compressed:
+            raise SeviriHritError(
+                f"{path.name} is compressed; decompress the HRIT segments first",
+            )
+        moment = handle.annotation_metadata["start_datetime"]
+        if observation is None:
+            observation = moment
+        elif moment != observation:
+            raise SeviriHritError(
+                f"HRIT files span more than one observation: {observation} and "
+                f"{moment} ({path.name}). Pass the files for a single cycle.",
+            )
         if handle.file_type == PROLOGUE_TYPE:
             prologue = handle
         elif handle.file_type == IMAGE_TYPE and handle.band is not None:
@@ -107,6 +136,35 @@ def _group_segments(
             if number in NARROWBAND_BANDS:
                 bands.setdefault(number, {})[int(handle.segment)] = handle
     return prologue, bands
+
+
+def _check_segments_complete(bands: SegmentMap, lines: int) -> None:
+    """Require each band's segments to tile the full disk with no gaps.
+
+    A missing segment is the normal partial-reception failure of an EUMETCast
+    feed, and left alone it is invisible: the array is pre-allocated as zeros,
+    so the gap becomes a black stripe in a file of exactly the right size,
+    which navigates correctly, passes every structural check we have, and is
+    calibrated by CLAVR-x as though the zeros were measurements.
+
+    Raises
+    ------
+    SeviriHritError
+        If any band's segments do not cover every line.
+    """
+    incomplete = {}
+    for band, segments in sorted(bands.items()):
+        covered = sum(
+            int(handle.metadata["block_1"]["num_lines"]) for handle in segments.values()
+        )
+        if covered != lines:
+            missing = sorted(set(range(1, max(segments) + 1)) - set(segments))
+            incomplete[band] = missing or f"{covered} of {lines} lines"
+    if incomplete:
+        raise SeviriHritError(
+            f"incomplete HRIT coverage; missing segments by band: {incomplete}. "
+            "A gap would be written as zeros and calibrated as real data.",
+        )
 
 
 def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
@@ -125,7 +183,9 @@ def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
     Raises
     ------
     SeviriHritError
-        If the prologue or any image segment is absent.
+        If the prologue is absent, if no image segments are present, if any
+        band's segments do not tile the full disk, or if the files span more
+        than one observation time.
     """
     prologue, bands = _group_segments(paths)
     if prologue is None:
@@ -138,6 +198,7 @@ def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
     lines = int(grid["numberOfLines"])
     elements = int(grid["numberOfColumns"])
     calibration = header["radiometricProcessing"]["level15ImageCalibration"]
+    _check_segments_complete(bands, lines)
 
     any_image = next(iter(next(iter(bands.values())).values()))
     return SeviriCounts(

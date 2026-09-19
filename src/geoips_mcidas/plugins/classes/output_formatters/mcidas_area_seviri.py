@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
-from geoips.interfaces.class_based.output_formatters import BaseOutputFormatterPlugin
+from geoips.interfaces.class_based.output_formatters import (
+    BaseOutputFormatterPlugin,
+)
 
 from geoips_mcidas.area import msg_cal, msgt_nav, writer
 from geoips_mcidas.area.directory import SeviriAreaMetadata
@@ -55,6 +57,44 @@ class MissingBandsError(ValueError):
 def count_variable(band: int) -> str:
     """Return the raw-count variable name for an MSG band."""
     return COUNT_VARIABLE_TEMPLATE.format(band=band)
+
+
+def resolve_counts_dataset(tree: xr.DataTree) -> xr.Dataset:
+    """Find the dataset holding raw counts, wherever the caller put it.
+
+    Called directly, the tree's own dataset carries the counts. Under the
+    order-based procflow it does not: ``Workflow._collect_upstream_data``
+    builds a fresh ``DataTree(name="multi_input")`` per step and attaches each
+    dependency as a *child*, so the root is empty and the reader's output is
+    one level down. A family-bearing plugin never sees this, because its
+    conduit extracts the node into a typed kwarg; a DataTree-native plugin
+    gets the wrapper.
+
+    Reading the root unconditionally therefore reports every band missing from
+    input that carries all of them, which blames the data for a wiring
+    mismatch. Search the children when the root holds no counts.
+
+    Parameters
+    ----------
+    tree
+        Either a node whose dataset holds ``B01Cnt`` .. ``B11Cnt``, or a
+        wrapper whose children include one.
+
+    Returns
+    -------
+    xr.Dataset
+        The dataset holding the counts, or the root's own dataset when no
+        child has any -- so the caller's band-coverage check reports the
+        problem rather than this function.
+    """
+    root = tree.to_dataset()
+    if any(count_variable(band) in root for band in CLAVRX_BANDS):
+        return root
+    for child in tree.children.values():
+        candidate = child.to_dataset()
+        if any(count_variable(band) in candidate for band in CLAVRX_BANDS):
+            return candidate
+    return root
 
 
 def collect_counts(dataset: xr.Dataset) -> dict[int, NDArray[np.integer]]:
@@ -165,7 +205,9 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
     interface = "output_formatters"
     name = "mcidas_area_seviri"
     data_tree = True
-    required_attributes = ("interface", "name")
+    # Drops "family": a DataTree-native plugin declares none. The base
+    # class types this as a plain list, so it cannot be a ClassVar here.
+    required_attributes = ["interface", "name"]  # noqa: RUF012
 
     def call(
         self,
@@ -193,8 +235,8 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
             attributes, which is how a family-less plugin hands results to the
             order-based procflow.
         """
-        dataset = data.to_dataset() if data.ds is not None else data.ds
-        attrs = dict(data.attrs) | dict(getattr(dataset, "attrs", {}))
+        dataset = resolve_counts_dataset(data)
+        attrs = dict(data.attrs) | dict(dataset.attrs)
         counts = collect_counts(dataset)
         check_band_coverage(set(counts))
 

@@ -132,3 +132,44 @@ def test_missing_attributes_are_named(tmp_path: Path) -> None:
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
     with pytest.raises(KeyError, match="longitude_of_projection_origin"):
         plugin(tree, tmp_path)
+
+
+def build_multi_input(tree: xr.DataTree) -> xr.DataTree:
+    """Wrap a reader node the way the order-based procflow does.
+
+    ``Workflow._collect_upstream_data`` builds a fresh ``multi_input`` tree per
+    step and attaches each dependency as a child, so the root carries no
+    variables at all.
+    """
+    wrapper = xr.DataTree(name="multi_input")
+    wrapper["reader"] = xr.DataTree(dataset=tree.to_dataset(), name="reader")
+    return wrapper
+
+
+def test_finds_counts_under_the_obp_multi_input_wrapper(tmp_path: Path) -> None:
+    """The shape a real order-based run delivers.
+
+    Reading the root unconditionally reports every band missing from input
+    that carries all eleven, which blames the data for a wiring mismatch.
+    """
+    plugin = mcidas_area_seviri.PLUGIN_CLASS()
+    wrapper = build_multi_input(build_tree())
+    assert list(wrapper.to_dataset().data_vars) == []
+
+    result = plugin(wrapper, tmp_path, _obp_initiated=True)
+    assert len(result.attrs["output_products"]) == 11
+
+
+def test_resolver_prefers_the_root_when_it_holds_counts() -> None:
+    """A directly-called tree must not be overtaken by a stray child."""
+    tree = build_tree()
+    tree["decoy"] = xr.DataTree(dataset=xr.Dataset(), name="decoy")
+    resolved = mcidas_area_seviri.resolve_counts_dataset(tree)
+    assert mcidas_area_seviri.count_variable(1) in resolved
+
+
+def test_resolver_falls_back_to_the_root_when_nothing_has_counts() -> None:
+    """Report through the band-coverage check, not from inside the resolver."""
+    empty = xr.DataTree(name="multi_input")
+    empty["reader"] = xr.DataTree(dataset=xr.Dataset(), name="reader")
+    assert list(mcidas_area_seviri.resolve_counts_dataset(empty).data_vars) == []

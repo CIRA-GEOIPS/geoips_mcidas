@@ -68,7 +68,9 @@ class SeviriHritCountsReaderPlugin(BaseReaderPlugin):
     interface = "readers"
     name = "seviri_hrit_counts"
     data_tree = True
-    required_attributes = ("interface", "name")
+    # Drops "family": a DataTree-native plugin declares none. The base
+    # class types this as a plain list, so it cannot be a ClassVar here.
+    required_attributes = ["interface", "name"]  # noqa: RUF012
 
     def call(
         self,
