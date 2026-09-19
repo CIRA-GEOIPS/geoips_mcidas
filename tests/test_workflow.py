@@ -57,9 +57,7 @@ def test_step_names_match_shipped_plugins(workflow: dict) -> None:
     """A typo here fails only at run time, and only after reading the data."""
     steps = workflow["spec"]["steps"]
     assert steps["reader"]["name"] == seviri_hrit_counts.PLUGIN_CLASS.name
-    assert (
-        steps["output_formatter"]["name"] == mcidas_area_seviri.PLUGIN_CLASS.name
-    )
+    assert steps["output_formatter"]["name"] == mcidas_area_seviri.PLUGIN_CLASS.name
 
 
 def test_no_resampling_steps(workflow: dict) -> None:
