@@ -145,3 +145,35 @@ def test_recognises_real_mcidas_output(
     checker: mcidas_area.McidasAreaOutputCheckerPlugin,
 ) -> None:
     assert checker.correct_file_format(str(reference_area))
+
+
+def test_a_truncated_file_is_rejected_not_silently_matched(
+    tmp_path: Path,
+    checker: mcidas_area.McidasAreaOutputCheckerPlugin,
+) -> None:
+    """Slicing past the end of bytes is silent, so a truncated file used to
+    yield an empty data block -- and two such files with different pixels
+    compared as identical, defeating the checker entirely."""
+    a = make_file(tmp_path / "a.area", seed=0)
+    b = make_file(tmp_path / "b.area", seed=1)
+    for path in (a, b):
+        path.write_bytes(path.read_bytes()[: words.DIRECTORY_BYTES])
+
+    assert not checker.outputs_match(str(a), str(b))
+    with pytest.raises(ValueError, match=r"outside the file|directory describes"):
+        parse.parse_area_file(a.read_bytes())
+
+
+@pytest.mark.parametrize("cards", [-1, 1000])
+def test_an_impossible_comment_count_is_rejected(tmp_path: Path, cards: int) -> None:
+    raw = bytearray(make_file(tmp_path / "a.area").read_bytes())
+    start = (words.COMMENT_CARDS - 1) * words.WORD_BYTES
+    raw[start : start + 4] = cards.to_bytes(4, "little", signed=True)
+    with pytest.raises(ValueError, match=r"negative comment card|directory describes"):
+        parse.parse_area_file(bytes(raw))
+
+
+def test_directory_word_rejects_an_out_of_range_word(tmp_path: Path) -> None:
+    raw = make_file(tmp_path / "a.area").read_bytes()
+    with pytest.raises(ValueError, match="outside 1"):
+        parse.directory_word(raw, 65)

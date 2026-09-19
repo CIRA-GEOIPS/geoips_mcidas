@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 import numpy as np
 from geoips.plugins.classes.readers.utils.hrit_reader import HritFile
 
+from geoips_mcidas.errors import SeviriHritError
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from datetime import datetime
@@ -63,10 +65,6 @@ class SeviriCounts(NamedTuple):
     platform_name: str
     observation_time: datetime
     sub_satellite_longitude_east: float
-
-
-class SeviriHritError(RuntimeError):
-    """Raised when a set of HRIT files cannot yield a complete image."""
 
 
 def platform_name(hrit_platform: str) -> str:
@@ -142,7 +140,9 @@ def _group_segments(
     seen: dict[str, object] = {}
     for path in paths:
         handle = HritFile(str(path))
-        if handle.compressed:
+        # Only image segments carry block_1; the prologue has no data to compress.
+        image_header = handle.metadata.get("block_1", {})
+        if int(image_header.get("compression", 0)) != 0:
             raise SeviriHritError(
                 f"{path.name} is compressed; decompress the HRIT segments first",
             )
@@ -230,7 +230,12 @@ def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
         band's segments do not tile the full disk, or if the files span more
         than one observation time.
     """
-    prologue, bands = _group_segments(paths)
+    try:
+        prologue, bands = _group_segments(paths)
+    except SeviriHritError:
+        raise
+    except (OSError, KeyError, ValueError) as exc:
+        raise SeviriHritError(f"could not read the HRIT files: {exc}") from exc
     if prologue is None:
         raise SeviriHritError("no HRIT prologue found; calibration is unavailable")
     if not bands:
@@ -243,15 +248,21 @@ def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
     calibration = header["radiometricProcessing"]["level15ImageCalibration"]
     _check_segments_complete(bands, lines)
 
-    any_image = next(iter(next(iter(bands.values())).values()))
+    # Assemble band by band and drop each band's handles as we go. HritFile
+    # caches every segment it reads as an int64 array -- four times the uint16
+    # actually wanted -- so holding all 88 alive retains about 1.2 GB that has
+    # already been copied into `counts`, plus one file descriptor each.
+    counts: dict[int, NDArray[np.uint16]] = {}
+    for band in sorted(bands):
+        counts[band] = _assemble_band(bands.pop(band), lines, elements)
+
     return SeviriCounts(
-        counts={
-            band: _assemble_band(segments, lines, elements)
-            for band, segments in sorted(bands.items())
-        },
+        counts=counts,
         gains=[float(entry["slope"]) for entry in calibration[:MSG_BANDS]],
         offsets=[float(entry["offset"]) for entry in calibration[:MSG_BANDS]],
         platform_name=platform_name(prologue.annotation_metadata["platform"]),
         observation_time=prologue.annotation_metadata["start_datetime"],
-        sub_satellite_longitude_east=float(any_image.geolocation_metadata["sublon"]),
+        sub_satellite_longitude_east=float(
+            header["imageDescription"]["projectionDescription"]["longitudeOfSSP"],
+        ),
     )

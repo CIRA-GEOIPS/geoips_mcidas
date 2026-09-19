@@ -123,3 +123,24 @@ def test_gain_and_offset_text_is_byte_exact(reference_area: Path) -> None:
         # Fields five and six of the record: gain and offset.
         gain_offset = slice(start + 4 * msg_cal.FIELD_WIDTH, start + 102)
         assert actual[gain_offset] == expected[gain_offset], f"band {band}"
+
+
+@pytest.mark.parametrize("value", [1e99, 1e-120, -1e100])
+def test_rejects_values_needing_a_three_digit_exponent(value: float) -> None:
+    """CLAVR-x reads this block by byte offset, so one over-wide field shifts
+    every field after it."""
+    with pytest.raises(ValueError, match="characters, not 17"):
+        msg_cal.format_e17_10(value)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_rejects_non_finite_values(value: float) -> None:
+    with pytest.raises(ValueError, match="cannot format"):
+        msg_cal.format_e17_10(value)
+
+
+@pytest.mark.parametrize("flags", [[10] * 12, [-1] * 12, [2, 2, 2]])
+def test_rejects_unusable_channel_flags(flags: list[int]) -> None:
+    """A two-character flag resizes the block through slice assignment."""
+    with pytest.raises(ValueError, match="channel-processing flags"):
+        msg_cal.build_msg_cal_block(REFERENCE_GAINS, REFERENCE_OFFSETS, pcp_flags=flags)

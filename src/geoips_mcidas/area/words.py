@@ -109,7 +109,12 @@ def encode_word(value: WordValue) -> bytes:
         if len(encoded) > WORD_BYTES:
             raise ValueError(f"ASCII word {value!r} exceeds {WORD_BYTES} bytes")
         return encoded.ljust(WORD_BYTES)
-    return int(value).to_bytes(WORD_BYTES, BYTE_ORDER, signed=True)
+    try:
+        return int(value).to_bytes(WORD_BYTES, BYTE_ORDER, signed=True)
+    except OverflowError as exc:
+        raise ValueError(
+            f"{value} does not fit a signed {WORD_BYTES}-byte word"
+        ) from exc
 
 
 def decode_word(raw: bytes) -> int:

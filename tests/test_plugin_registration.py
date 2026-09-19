@@ -7,7 +7,9 @@ collection does not yet, for the reason captured below.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from importlib.metadata import entry_points
+from pathlib import Path
 
 import pytest
 
@@ -92,3 +94,40 @@ def test_plugins_resolve_by_name(interface_name: str, plugin_name: str) -> None:
 
     plugin = getattr(interfaces, interface_name).get_plugin(plugin_name)
     assert plugin.name == plugin_name
+
+
+@requires_patched_pluginify
+def test_missing_bands_error_is_catchable_through_the_registry(
+    tmp_path: Path,
+) -> None:
+    """The registry re-executes plugin modules, producing a second copy of
+    every class defined there.
+
+    An exception class defined inside a plugin module therefore has the same
+    name and module as the one a caller imports, and still fails isinstance --
+    so `except MissingBandsError` never fires. Importing it from a plain module
+    is what makes the custom exception usable at all. Every other test in the
+    suite imports the plugin directly and so cannot see this.
+    """
+    import numpy as np
+    import xarray as xr
+    from geoips import interfaces
+
+    from geoips_mcidas.errors import MissingBandsError
+    from geoips_mcidas.plugins.classes.output_formatters.mcidas_area_seviri import (
+        count_variable,
+    )
+
+    incomplete = xr.Dataset(
+        {count_variable(b): (("y", "x"), np.zeros((2, 2), np.uint16)) for b in (1, 2)},
+        attrs={
+            "platform_name": "meteosat-11",
+            "start_datetime": datetime(2021, 5, 21, 1, 0, tzinfo=UTC),
+            "longitude_of_projection_origin": 0.0,
+            "seviri_calibration_gains": [1.0] * 12,
+            "seviri_calibration_offsets": [0.0] * 12,
+        },
+    )
+    plugin = interfaces.output_formatters.get_plugin("mcidas_area_seviri")
+    with pytest.raises(MissingBandsError):
+        plugin(xr.DataTree(dataset=incomplete, name="DATA"), tmp_path)

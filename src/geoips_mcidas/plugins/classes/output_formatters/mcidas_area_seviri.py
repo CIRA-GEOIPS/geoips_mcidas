@@ -31,6 +31,7 @@ from geoips_mcidas.area.directory import (
     SeviriAreaMetadata,
 )
 from geoips_mcidas.area.filenames import build_area_filename
+from geoips_mcidas.errors import MissingBandsError
 from geoips_mcidas.seviri.scene import SeviriScene
 
 if TYPE_CHECKING:
@@ -52,10 +53,6 @@ OFFSETS_ATTR: Final = "seviri_calibration_offsets"
 SUB_LON_ATTR: Final = "longitude_of_projection_origin"
 PLATFORM_ATTR: Final = "platform_name"
 START_TIME_ATTR: Final = "start_datetime"
-
-
-class MissingBandsError(ValueError):
-    """Raised when the input does not carry every band CLAVR-x requires."""
 
 
 def count_variable(band: int) -> str:
@@ -92,13 +89,23 @@ def resolve_counts_dataset(tree: xr.DataTree) -> xr.Dataset:
         problem rather than this function.
     """
     root = tree.to_dataset()
-    if any(count_variable(band) in root for band in CLAVRX_BANDS):
+    if _holds_all_counts(root):
         return root
     for child in tree.children.values():
         candidate = child.to_dataset()
-        if any(count_variable(band) in candidate for band in CLAVRX_BANDS):
+        if _holds_all_counts(candidate):
             return candidate
     return root
+
+
+def _holds_all_counts(dataset: xr.Dataset) -> bool:
+    """Whether a dataset carries every band, not merely one of them.
+
+    Selecting on presence would let a partial sibling node shadow the complete
+    one, and the resulting error would blame the data for a resolution
+    mistake.
+    """
+    return all(count_variable(band) in dataset for band in CLAVRX_BANDS)
 
 
 def collect_counts(dataset: xr.Dataset) -> dict[int, NDArray[np.integer]]:
@@ -110,21 +117,42 @@ def collect_counts(dataset: xr.Dataset) -> dict[int, NDArray[np.integer]]:
     }
 
 
-def scene_from_attrs(attrs: Mapping[Hashable, Any]) -> SeviriScene:
-    """Build scene metadata from a dataset's attributes.
+REQUIRED_ATTRS: Final = (
+    PLATFORM_ATTR,
+    START_TIME_ATTR,
+    SUB_LON_ATTR,
+    GAINS_ATTR,
+    OFFSETS_ATTR,
+)
+
+
+def require_attrs(attrs: Mapping[Hashable, Any]) -> None:
+    """Check every attribute the writer needs, whatever path produced it.
+
+    The gains and offsets are read outside ``scene_from_attrs``, so validating
+    only inside it left them unchecked whenever a caller passed ``scene=``.
 
     Raises
     ------
     KeyError
-        If a required attribute is absent.
+        Naming every absent attribute at once.
+    TypeError
+        If the observation time is not a datetime. xarray attributes routinely
+        hold numpy scalars and strings, and the failure would otherwise
+        surface as an AttributeError from deep inside filename construction.
     """
-    missing = [
-        name
-        for name in (PLATFORM_ATTR, START_TIME_ATTR, SUB_LON_ATTR)
-        if name not in attrs
-    ]
+    missing = [name for name in REQUIRED_ATTRS if name not in attrs]
     if missing:
         raise KeyError(f"input is missing required attributes: {missing}")
+    moment = attrs[START_TIME_ATTR]
+    if not isinstance(moment, datetime):
+        raise TypeError(
+            f"{START_TIME_ATTR} must be a datetime, got {type(moment).__name__}",
+        )
+
+
+def scene_from_attrs(attrs: Mapping[Hashable, Any]) -> SeviriScene:
+    """Build scene metadata from a dataset's attributes."""
     return SeviriScene(
         platform_name=str(attrs[PLATFORM_ATTR]),
         observation_time=attrs[START_TIME_ATTR],
@@ -329,6 +357,7 @@ class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):
         dataset = resolve_counts_dataset(data)
         attrs = dict(data.attrs) | dict(dataset.attrs)
         target = resolve_output_directory(output_directory)
+        require_attrs(attrs)
         counts = collect_counts(dataset)
         check_band_coverage(set(counts))
         if not allow_subset:

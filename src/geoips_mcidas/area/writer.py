@@ -159,6 +159,13 @@ def _check_block_sizes(nav_block: bytes, cal_block: bytes) -> None:
         )
 
 
+def _default_file_mode() -> int:
+    """Return the mode a plain ``open(path, "wb")`` would produce here."""
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def write_area_file(
     path: Path,
     meta: SeviriAreaMetadata,
@@ -199,6 +206,11 @@ def write_area_file(
             stream.write(contents)
             stream.flush()
             os.fsync(stream.fileno())
+        # mkstemp creates 0600 by design and replace() preserves the inode, so
+        # without this the published file is unreadable by any other account.
+        # CLAVR-x is a separate binary that may well run as one, and its
+        # failure mode for a file it cannot open is a silent skip.
+        tmp.chmod(_default_file_mode())
         tmp.replace(path)
     except BaseException:
         tmp.unlink(missing_ok=True)

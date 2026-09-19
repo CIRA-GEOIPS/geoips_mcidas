@@ -18,6 +18,7 @@ zero for the solar channels (1-3) and HRV (12), which have no Planck constants.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 import numpy as np
@@ -118,13 +119,23 @@ def format_e17_10(value: float) -> str:
     str
         Exactly ``FIELD_WIDTH`` characters, right-justified.
     """
+    if not math.isfinite(value):
+        raise ValueError(f"cannot format {value} as a Fortran E17.10 field")
     if value == 0.0:
         return " 0." + "0" * FIELD_DECIMALS + "E+00"
     sign = "-" if value < 0 else " "
     mantissa, _, exponent = f"{abs(value):.{FIELD_DECIMALS - 1}E}".partition("E")
     digits = mantissa.replace(".", "")
     shifted = int(exponent) + 1
-    return f"{sign}0.{digits}E{'+' if shifted >= 0 else '-'}{abs(shifted):02d}"
+    field = f"{sign}0.{digits}E{'+' if shifted >= 0 else '-'}{abs(shifted):02d}"
+    # A three-digit exponent overflows the fixed width, and CLAVR-x reads this
+    # block by byte offset: one long field shifts every field after it.
+    if len(field) != FIELD_WIDTH:
+        raise ValueError(
+            f"{value} formats to {len(field)} characters, not {FIELD_WIDTH}; "
+            "it would shift every later field in the record",
+        )
+    return field
 
 
 def _record(
@@ -184,6 +195,10 @@ def build_msg_cal_block(
         raise ValueError(f"expected {MSG_BANDS} gains and offsets")
     table = planck or {}
     flags = pcp_flags if pcp_flags is not None else [DEFAULT_PCP_FLAG] * MSG_BANDS
+    if len(flags) != MSG_BANDS or any(not 0 <= flag <= 9 for flag in flags):  # noqa: PLR2004
+        raise ValueError(
+            f"expected {MSG_BANDS} single-digit channel-processing flags, got {flags}",
+        )
 
     block = bytearray(CAL_BLOCK_BYTES)
     block[:WORD_BYTES] = CAL_TAG.encode("ascii")
@@ -196,6 +211,10 @@ def build_msg_cal_block(
     for index, flag in enumerate(flags[:MSG_BANDS]):
         start = flag_start + index * WORD_BYTES
         block[start : start + WORD_BYTES] = (str(flag) * WORD_BYTES).encode("ascii")
+    if len(block) != CAL_BLOCK_BYTES:
+        raise ValueError(
+            f"calibration block is {len(block)} bytes, not {CAL_BLOCK_BYTES}",
+        )
     return bytes(block)
 
 
