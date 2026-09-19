@@ -1,0 +1,28 @@
+# Convert MSG SEVIRI HRIT into per-band McIDAS AREA files for CLAVR-x.
+#
+# Deliberately short: there is no sector, product or colormapper step. CLAVR-x
+# needs native full-disk counts with the satellite's own geostationary
+# navigation, so resampling the data would make the output wrong rather than
+# merely different -- CLAVR-x hardcodes full-disk navigation constants and
+# would silently mis-navigate a subset.
+apiVersion: geoips/v1
+interface: workflows
+family: order_based
+name: seviri_hrit_mcidas_area
+docstring: |
+  MSG SEVIRI HRIT to single-band McIDAS AREA files, one per narrowband
+  channel, named so CLAVR-x can derive every sibling from the band-1 name.
+package: geoips_mcidas
+spec:
+  globals:
+    output_directory: !ENV ${GEOIPS_OUTDIRS}/seviri_area
+  steps:
+    reader:
+      kind: reader
+      name: seviri_hrit_counts
+    output_formatter:
+      kind: output_formatter
+      name: mcidas_area_seviri
+      arguments:
+        output_directory: !ENV ${GEOIPS_OUTDIRS}/seviri_area
+      depends_on: [reader]
