@@ -83,17 +83,14 @@ def test_every_band_file_carries_all_twelve_records() -> None:
 
 @pytest.mark.golden
 def test_matches_reference_cal_block(reference_area: Path) -> None:
-    """Reproduce McIDAS's calibration block, field by field.
+    """Reproduce McIDAS's calibration block byte for byte.
 
-    Gain and offset are compared exactly: they are the only fields CLAVR-x
-    reads, and they pass through us unchanged from the HRIT prologue.
-
-    The four Planck fields are compared with a tolerance instead. McIDAS
-    derives them in Fortran single precision, and the printed values sit off
-    the float32 grid in a way that no ordering of the arithmetic reproduces
-    bit for bit. Since CLAVR-x ignores these fields entirely, matching the
-    physics to eight significant figures is the useful guarantee, not matching
-    the rounding noise.
+    Every one of the 1600 bytes, including the Planck fields. Those only match
+    because the three physical constants and each wavenumber/alpha/beta are
+    rounded through single precision before the double-precision arithmetic --
+    which is what Fortran does to an ``E`` literal assigned to a double
+    precision parameter. Without that rounding not one of the 32 Planck fields
+    matches; with it, all of them do.
     """
     with reference_area.open("rb") as handle:
         handle.seek(CAL_OFFSET_IN_FILE)
@@ -105,21 +102,11 @@ def test_matches_reference_cal_block(reference_area: Path) -> None:
         msg_cal.METEOSAT_11_PLANCK,
     )
 
-    assert len(actual) == len(expected)
-    assert actual[:4] == expected[:4]
-
     for band in range(1, msg_cal.MSG_BANDS + 1):
-        ours = msg_cal.parse_cal_record(actual, band)
-        theirs = msg_cal.parse_cal_record(expected, band)
-        assert ours.gain == theirs.gain, f"band {band} gain"
-        assert ours.offset == theirs.offset, f"band {band} offset"
-        for name in ("c1w3", "c2w", "alpha", "beta"):
-            mine, ref = getattr(ours, name), getattr(theirs, name)
-            assert mine == pytest.approx(ref, rel=1e-6), f"band {band} {name}"
-
-    flag_start = 4 + msg_cal.MSG_BANDS * msg_cal.CAL_RECORD_BYTES
-    flag_stop = flag_start + msg_cal.MSG_BANDS * 4
-    assert actual[flag_start:flag_stop] == expected[flag_start:flag_stop]
+        start = 4 + (band - 1) * msg_cal.CAL_RECORD_BYTES
+        stop = start + msg_cal.CAL_RECORD_BYTES
+        assert actual[start:stop] == expected[start:stop], f"band {band}"
+    assert actual == expected
 
 
 @pytest.mark.golden

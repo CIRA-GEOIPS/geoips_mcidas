@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, NamedTuple
 
+import numpy as np
+
 from geoips_mcidas.area.words import WORD_BYTES
 
 if TYPE_CHECKING:
@@ -38,10 +40,26 @@ MSG_BANDS: Final = 12
 DEFAULT_PCP_FLAG: Final = 2
 """Planned-channel-processing flag written for every channel by default."""
 
+
+def _single(value: float) -> float:
+    """Round a literal through single precision, as Fortran does.
+
+    McIDAS declares these constants as ``parameter (PLANCK = 6.626176E-34)``.
+    An ``E`` literal in Fortran is default REAL, so it is rounded to single
+    precision and only then widened on assignment to the double precision
+    parameter. The arithmetic that follows is double.
+
+    Reproducing that one rounding step is what makes our calibration block
+    byte-identical to McIDAS's: with it, all 32 Planck fields match
+    character for character; without it, none of them do.
+    """
+    return float(np.float32(value))
+
+
 # Physical constants, as McIDAS uses them to build the radiance transform.
-PLANCK_CONSTANT: Final = 6.626176e-34
-SPEED_OF_LIGHT: Final = 2.99792458e8
-BOLTZMANN_CONSTANT: Final = 1.380662e-23
+PLANCK_CONSTANT: Final = _single(6.626176e-34)
+SPEED_OF_LIGHT: Final = _single(2.99792458e8)
+BOLTZMANN_CONSTANT: Final = _single(1.380662e-23)
 
 _C1: Final = 2.0e5 * PLANCK_CONSTANT * SPEED_OF_LIGHT * SPEED_OF_LIGHT
 _C2: Final = PLANCK_CONSTANT * SPEED_OF_LIGHT / BOLTZMANN_CONSTANT
@@ -69,8 +87,8 @@ METEOSAT_11_PLANCK: Final[dict[int, PlanckCoefficients]] = {
 }
 """Thermal-channel constants for Meteosat-11.
 
-Verified by reproducing the calibration block of a McIDAS-produced file to
-within float32 precision. Tables for Meteosat-8, -9 and -10 are not included:
+Verified by reproducing the calibration block of a McIDAS-produced file
+character for character. Tables for Meteosat-8, -9 and -10 are not included:
 they would have to be transcribed from the EUMETSAT MSG Level 1.5 Image Data
 Format Description, and guessing them is worse than writing zeros, which is
 what :func:`build_msg_cal_block` does when no table is supplied. CLAVR-x
@@ -118,10 +136,10 @@ def _record(
     if planck is None:
         c1w3 = c2w = alpha = beta = 0.0
     else:
-        w = _WAVENUMBER_TO_PER_METRE * planck.wavenumber
+        w = _WAVENUMBER_TO_PER_METRE * _single(planck.wavenumber)
         c1w3 = _C1 * w * w * w
         c2w = _C2 * w
-        alpha, beta = planck.alpha, planck.beta
+        alpha, beta = _single(planck.alpha), _single(planck.beta)
     fields = (c1w3, c2w, alpha, beta, gain, offset)
     text = "".join(format_e17_10(field) for field in fields) + "  "
     return text.encode("ascii")
