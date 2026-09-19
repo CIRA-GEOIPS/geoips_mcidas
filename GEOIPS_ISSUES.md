@@ -18,6 +18,33 @@ Environment for every reproduction below:
 
 Ordered by severity.
 
+## Patch status
+
+Fixes are on stacked branches, each with a brassy release note, `black` clean and
+`flake8` clean.
+
+| #   | Repository | Branch                                      | State                                |
+| --- | ---------- | ------------------------------------------- | ------------------------------------ |
+| 1   | pluginify  | `fix-1-family-metadata`                     | patched, verified                    |
+| 2   | pluginify  | `fix-2-plugin-is-valid`                     | patched, verified                    |
+| 3   | pluginify  | `fix-3-dataclass-loader`                    | patched, verified                    |
+| 4   | geoips     | `fix/cached-json-collides-across-checkouts` | patched, verified                    |
+| 4b  | geoips     | `fix/cached-json-write-atomicity`           | patched                              |
+| 5   | geoips     | none                                        | reported only; needs an API decision |
+| 6   | geoips     | none                                        | reported only; feature work          |
+| 7   | geoips     | none                                        | reported only                        |
+| 8   | geoips     | none                                        | reported only; enhancement           |
+| 9   | geoips     | `fix/ship-py-typed-marker`                  | patched                              |
+| 10  | geoips     | `docs/correct-plugin-entry-point-group`     | patched                              |
+
+The pluginify branches are stacked on a vendored copy of the released 1.0.0 source,
+because the local pluginify checkout carries a later, restructured version that geoips
+1.20.0a0 cannot import (`pluginify.interfaces.base` is gone). That later version already
+contains the fix for issue 1.
+
+With issues 1 and 2 applied, all three plugins in this package register and resolve by
+name, and `geoips list` works once issue 4 is applied.
+
 ______________________________________________________________________
 
 ## 1. Registry build aborts for every installed package when one plugin omits `family`
@@ -349,38 +376,52 @@ plugin currently has no supported output-comparison path.
 
 ______________________________________________________________________
 
-## 7. Workflow validator accepts an unknown step `kind`
+## 7. `workflows.validator.validate` does not apply the model that validates steps
 
 **Repository:** geoips
-**Severity:** medium
+**Severity:** low
 
 ### Summary
 
-`workflows.validator.validate` returns successfully for a workflow whose step
-declares a `kind` that does not correspond to any interface. The error only
-appears at run time, after input data has been read.
+`WorkflowsInterface` sets `use_pydantic = True`, and
+`geoips.pydantic_models.v1.workflows.WorkflowPluginModel` correctly rejects an
+unknown step `kind`. The `validator.validate` attribute reachable from the
+interface object does not apply that model: it accepts a workflow whose step
+declares a `kind` that matches no interface.
 
 ### Steps to reproduce
 
 ```python
 from geoips.interfaces import workflows
+from geoips.pydantic_models.v1.workflows import WorkflowPluginModel
 
-bad = {
-    **valid_workflow,
-    "spec": {"globals": {}, "steps": {"reader": {"kind": "not_a_kind"}}},
-}
+bad = {**valid_workflow,
+       "spec": {"globals": {}, "steps": {"reader": {"kind": "not_a_kind", "name": "x"}}}}
+
 workflows.validator.validate(bad)   # returns a dict, raises nothing
+WorkflowPluginModel(**bad)          # ValidationError: Invalid plugin kind: 'not_a_kind'
 ```
-
-### Expected behaviour
-
-Validation rejects a `kind` outside the set of known interfaces, and a `name`
-that is not a registered plugin for that interface.
 
 ### Impact
 
-Workflow YAML cannot be checked in CI. A typo in a step name or kind is found
-only by running the workflow.
+Limited. The model that runs during plugin loading is the strict one, so a bad
+`kind` is caught in practice. The problem is that `validator.validate` looks
+like the way to check a workflow and reports success on input the loader will
+reject, which sends anyone writing a pre-commit check or a CI lint down the
+wrong path.
+
+### Suggested resolution
+
+Either route `validator.validate` through `WorkflowPluginModel` for interfaces
+that set `use_pydantic`, or document that it performs schema-level checks only
+and point callers at the pydantic model.
+
+### Note
+
+An earlier draft of this document described this as the validator having no
+step-kind validation at all. That was wrong: it was tested through
+`validator.validate` rather than through the pydantic model, which does
+validate correctly.
 
 ______________________________________________________________________
 

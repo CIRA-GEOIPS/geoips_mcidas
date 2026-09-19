@@ -42,21 +42,53 @@ def test_output_checker_keeps_its_family() -> None:
     assert mcidas_area.PLUGIN_CLASS.family == "standard"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "pluginify 1.0.0 reads plugin_class.family unconditionally in "
-        "collect_class_plugin_metadata, so a DataTree-native plugin cannot be "
-        "registered. Fix is one line: getattr(plugin_class, 'family', None). "
-        "Until then these plugins must be invoked directly rather than "
-        "resolved by name."
-    ),
-    raises=AttributeError,
-    strict=True,
+def _pluginify_tolerates_missing_family() -> bool:
+    """Whether the installed pluginify can register a family-less plugin.
+
+    pluginify 1.0.0 reads ``plugin_class.family`` unconditionally in
+    ``collect_class_plugin_metadata`` and again in ``plugin_is_valid``, so a
+    DataTree-native plugin aborts the registry build for every installed
+    package. See GEOIPS_ISSUES.md issues 1 and 2. These tests assert the
+    behaviour we need and skip, rather than fail, on an unpatched install.
+    """
+    from pluginify.create_plugin_registries import collect_class_plugin_metadata
+
+    try:
+        collect_class_plugin_metadata(mcidas_area_seviri.PLUGIN_CLASS)
+    except AttributeError:
+        return False
+    return True
+
+
+requires_patched_pluginify = pytest.mark.skipif(
+    not _pluginify_tolerates_missing_family(),
+    reason="installed pluginify cannot register family-less plugins; "
+    "see GEOIPS_ISSUES.md",
 )
-def test_registry_build_accepts_family_less_plugins() -> None:
-    """Flips to passing once pluginify tolerates a missing ``family``."""
+
+
+@requires_patched_pluginify
+def test_registry_metadata_records_a_null_family() -> None:
     from pluginify.create_plugin_registries import collect_class_plugin_metadata
 
     metadata = collect_class_plugin_metadata(mcidas_area_seviri.PLUGIN_CLASS)
     assert metadata["name"] == "mcidas_area_seviri"
     assert metadata["family"] is None
+    assert metadata["interface"] == "output_formatters"
+
+
+@requires_patched_pluginify
+@pytest.mark.parametrize(
+    ("interface_name", "plugin_name"),
+    [
+        ("readers", "seviri_hrit_counts"),
+        ("output_formatters", "mcidas_area_seviri"),
+        ("output_checkers", "mcidas_area"),
+    ],
+)
+def test_plugins_resolve_by_name(interface_name: str, plugin_name: str) -> None:
+    """Resolution by name is what an order-based workflow actually needs."""
+    from geoips import interfaces
+
+    plugin = getattr(interfaces, interface_name).get_plugin(plugin_name)
+    assert plugin.name == plugin_name
