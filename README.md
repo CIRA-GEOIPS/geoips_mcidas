@@ -37,6 +37,38 @@ nix develop      # toolchain
 uv run pytest    # tests
 ```
 
+## Verification status
+
+The repository ships with a matched input/output pair as the basis for testing:
+the HRIT segments for 2021-05-21 01:00 and the AREA file McIDAS-X produced from
+exactly those segments. Tests marked `golden` compare against it and skip when
+it is absent.
+
+What is verified:
+
+- **Counts match McIDAS pixel for pixel** — 13,778,944 of 13,778,944 on every
+  band tested. This is what pins the row order down; HRIT segment 1 is the
+  southernmost strip, so the assembled image is flipped to north-up. Without
+  the flip roughly a quarter of pixels still coincide, which is enough for an
+  image to look plausible while being upside down.
+- **Navigation block matches word for word**, and gain/offset in the
+  calibration block match byte for byte.
+- **Directory matches on every shared word.** Words 14, 15, 19 and 51 are
+  excluded because the reference is McIDAS's multi-band intermediate, whereas
+  CLAVR-x reads the single-band files — and those four are exactly what differ.
+- **Filenames round-trip through CLAVR-x's sibling splice**, reimplemented from
+  its Fortran and tested for all eleven bands.
+
+What is *not* verified: a CLAVR-x run against these files. That needs
+`met11_instr.dat` from the ancillary bundle and GFS ancillary data, neither of
+which is present here.
+
+The four Planck fields in the calibration block match the physics to six
+significant figures but are not byte-identical to McIDAS's. McIDAS computes
+them in Fortran single precision and the printed values sit off the float32
+grid, so no ordering of the arithmetic reproduces them. CLAVR-x ignores those
+fields entirely.
+
 ## Known blocker: registry metadata for DataTree-native plugins
 
 The reader and output formatter are DataTree-native — `data_tree = True` and no
