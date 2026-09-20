@@ -8,9 +8,15 @@ Parsing therefore means reading the offsets first and slicing between them.
 
 from __future__ import annotations
 
-from typing import Final, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
+
+import numpy as np
 
 from geoips_mcidas.area import words
+from geoips_mcidas.area.directory import PIXEL_BYTES
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 MIN_AREA_BYTES: Final = words.DIRECTORY_BYTES
 
@@ -164,3 +170,54 @@ def _check_consistent(
             f"file is {len(raw)} bytes; the directory describes {expected} "
             "(truncated, padded, or the directory is wrong)",
         )
+
+
+def band_plane(raw: bytes, band: int) -> NDArray[np.uint16]:
+    """Extract one band's pixels from an AREA file, multi-band or not.
+
+    AREA data is band-interleaved by pixel behind a per-line prefix, so a band
+    is a strided view rather than a contiguous block. Reading a band out of
+    McIDAS's multi-band intermediate and out of one of our single-band files
+    goes through the same code here, which is what lets the two be compared.
+
+    Parameters
+    ----------
+    raw
+        A whole AREA file.
+    band
+        The MSG band to extract, 1-based.
+
+    Returns
+    -------
+    NDArray[np.uint16]
+        Shaped ``(lines, elements)``.
+
+    Raises
+    ------
+    ValueError
+        If the file does not carry that band, or its elements are not two
+        bytes wide.
+    """
+    bands = directory_word(raw, words.NUM_BANDS)
+    band_map = directory_word(raw, words.BAND_MAP)
+    if not band_map & (1 << (band - 1)):
+        raise ValueError(f"band {band} is not in this file (band map {band_map})")
+    if directory_word(raw, words.BYTES_PER_PIXEL) != PIXEL_BYTES:
+        raise ValueError("only two-byte elements are supported")
+
+    lines = directory_word(raw, words.NUM_LINES)
+    elements = directory_word(raw, words.NUM_ELEMENTS)
+    prefix = directory_word(raw, words.PREFIX_BYTES)
+    offset = directory_word(raw, words.DATA_OFFSET)
+
+    # Which of this file's planes holds the wanted band: its position among
+    # the bits set in the band map, not the band number itself.
+    plane = bin(band_map & ((1 << (band - 1)) - 1)).count("1")
+    line_words = (prefix + elements * bands * PIXEL_BYTES) // PIXEL_BYTES
+    block = np.frombuffer(
+        raw,
+        dtype="<u2",
+        offset=offset,
+        count=lines * line_words,
+    ).reshape(lines, line_words)
+    return np.ascontiguousarray(block[:, prefix // PIXEL_BYTES + plane :: bands])

@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("geoips")
+from geoips_mcidas.area import parse
 from geoips_mcidas.seviri import counts as seviri_counts
 
 FULL_DISK = 3712
@@ -22,21 +23,13 @@ REFERENCE_PREFIX_BYTES = 12
 
 
 def reference_band_plane(area_path: Path, band: int) -> np.ndarray:
-    """Extract one band from the multi-band reference file.
+    """One band of the reference file, via the package's own extractor.
 
-    Data is band-interleaved by pixel, behind a 12-byte per-line band list, so
-    a band is a strided view rather than a contiguous block.
+    Reading the reference with the same code the checker uses keeps the tests
+    from encoding a second, independent idea of the BIP layout that could
+    drift from the first.
     """
-    line_words = (REFERENCE_PREFIX_BYTES + FULL_DISK * NARROWBAND_COUNT * 2) // 2
-    mapped = np.memmap(
-        area_path,
-        dtype="<u2",
-        mode="r",
-        offset=REFERENCE_DATA_OFFSET,
-        shape=(FULL_DISK, line_words),
-    )
-    start = REFERENCE_PREFIX_BYTES // 2 + (band - 1)
-    return np.ascontiguousarray(mapped[:, start::NARROWBAND_COUNT])
+    return parse.band_plane(area_path.read_bytes(), band)
 
 
 @pytest.mark.parametrize(

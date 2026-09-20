@@ -12,6 +12,10 @@ from geoips_mcidas.area import directory, msg_cal, msgt_nav, parse, words, write
 
 pytest.importorskip("geoips")
 from geoips_mcidas.plugins.classes.output_checkers import mcidas_area
+from geoips_mcidas.plugins.classes.output_formatters import mcidas_area_seviri
+from geoips_mcidas.plugins.classes.readers import seviri_hrit_counts
+from geoips_mcidas.seviri.counts import SeviriCounts
+from tests.conftest import require_free_bytes
 
 OBSERVED = datetime(2021, 5, 21, 1, 0, tzinfo=UTC)
 CREATED = datetime(2026, 9, 18, 15, 45, 41, tzinfo=UTC)
@@ -192,3 +196,74 @@ def test_a_differing_directory_word_is_caught(
     b = tmp_path / "b.area"
     b.write_bytes(bytes(raw))
     assert not checker.outputs_match(str(a), str(b))
+
+
+@pytest.mark.golden
+@pytest.mark.parametrize("band", [1, 5, 9, 11])
+def test_accepts_a_real_mcidas_file_as_the_reference(
+    reference_area: Path,
+    sample_counts: SeviriCounts,
+    tmp_path: Path,
+    checker: mcidas_area.McidasAreaOutputCheckerPlugin,
+    band: int,
+) -> None:
+    """The comparison that matters most: our output against McIDAS's own.
+
+    The reference is McIDAS's multi-band intermediate and ours is one of the
+    single-band files CLAVR-x reads, so the band-layout words differ by
+    construction and the pixels are compared plane for plane.
+    """
+    require_free_bytes(tmp_path, 60_000_000)
+    scene = mcidas_area_seviri.scene_from_attrs(
+        seviri_hrit_counts.counts_to_dataset(sample_counts).attrs,
+    )
+    written = mcidas_area_seviri.write_seviri_bands(
+        {band: sample_counts.counts[band]},
+        sample_counts.gains,
+        sample_counts.offsets,
+        scene,
+        tmp_path,
+    )
+    assert checker.outputs_match(written[0], str(reference_area))
+
+
+@pytest.mark.golden
+def test_rejects_a_reference_for_a_different_band(
+    reference_area: Path,
+    sample_counts: SeviriCounts,
+    tmp_path: Path,
+    checker: mcidas_area.McidasAreaOutputCheckerPlugin,
+) -> None:
+    """Guards the guard: matching against a multi-band reference must still
+    compare the right plane, not merely find one that fits."""
+    require_free_bytes(tmp_path, 60_000_000)
+    scene = mcidas_area_seviri.scene_from_attrs(
+        seviri_hrit_counts.counts_to_dataset(sample_counts).attrs,
+    )
+    written = mcidas_area_seviri.write_seviri_bands(
+        {9: sample_counts.counts[5]},  # band 5 pixels labelled as band 9
+        sample_counts.gains,
+        sample_counts.offsets,
+        scene,
+        tmp_path,
+    )
+    assert not checker.outputs_match(written[0], str(reference_area))
+
+
+def test_provenance_differences_do_not_block_a_match(
+    tmp_path: Path,
+    checker: mcidas_area.McidasAreaOutputCheckerPlugin,
+) -> None:
+    """A McIDAS file records the commands that made it; we record none."""
+    a = make_file(tmp_path / "a.area")
+    raw = bytearray(make_file(tmp_path / "b.area").read_bytes())
+    for word, value in (
+        (words.CREATION_DATE, 199001),
+        (words.CREATION_TIME, 123456),
+        (words.AREA_NUMBER, 7),
+    ):
+        start = (word - 1) * words.WORD_BYTES
+        raw[start : start + 4] = value.to_bytes(4, "little", signed=True)
+    b = tmp_path / "b.area"
+    b.write_bytes(bytes(raw))
+    assert checker.outputs_match(str(a), str(b))

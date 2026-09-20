@@ -40,6 +40,10 @@ RESOLUTION: Final = 3
 line and element of the 11136-point navigation grid."""
 
 UPPER_LEFT_COORDINATE: Final = 1
+
+Z_COORDINATE: Final = 1
+"""Image depth. McIDAS writes 1 here, so we do too: it costs nothing and
+keeps a McIDAS-written file usable as a byte-level comparison reference."""
 SOURCE_TYPE: Final = "MSG "
 CAL_TYPE: Final = "RAW "
 """Raw counts. CLAVR-x never checks this word, but it does assume raw data."""
@@ -148,6 +152,7 @@ def build_directory(meta: SeviriAreaMetadata) -> bytes:
         words.IMAGE_TIME: image_time,
         words.START_LINE: UPPER_LEFT_COORDINATE,
         words.START_ELEMENT: UPPER_LEFT_COORDINATE,
+        words.Z_COORDINATE: Z_COORDINATE,
         words.NUM_LINES: meta.n_lines,
         words.NUM_ELEMENTS: meta.n_elements,
         words.BYTES_PER_PIXEL: PIXEL_BYTES,

@@ -53,6 +53,11 @@ What is verified:
   image to look plausible while being upside down.
 - **Navigation and calibration blocks match byte for byte**, Planck fields
   included.
+- **A McIDAS-written file works directly as a `--compare_path` reference.** The
+  output checker ignores provenance — creation stamps, AREA slot number and the
+  audit-trail cards McIDAS records and we do not — and compares a single-band
+  file against the matching plane of a multi-band reference. All eleven bands
+  of a real run validate against the reference file this way.
 - **Directory matches on every shared word.** Words 14, 15, 19 and 51 are
   excluded because the reference is McIDAS's multi-band intermediate, whereas
   CLAVR-x reads the single-band files — and those four are exactly what differ.

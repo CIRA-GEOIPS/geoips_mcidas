@@ -37,6 +37,8 @@ YEAR_DAY: Final = 4
 IMAGE_TIME: Final = 5
 START_LINE: Final = 6
 START_ELEMENT: Final = 7
+Z_COORDINATE: Final = 8
+"""Image depth. McIDAS writes 1; nothing reads it."""
 NUM_LINES: Final = 9
 NUM_ELEMENTS: Final = 10
 BYTES_PER_PIXEL: Final = 11
