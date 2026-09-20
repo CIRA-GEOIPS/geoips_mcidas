@@ -32,7 +32,7 @@ FULL_DISK_LINES: Final = 3712
 FULL_DISK_ELEMENTS: Final = 3712
 """CLAVR-x hard-codes full-disk navigation, so any other size mis-navigates."""
 
-BYTES_PER_PIXEL: Final = 2
+PIXEL_BYTES: Final = 2
 """SEVIRI counts are 10-bit, stored in two bytes."""
 
 RESOLUTION: Final = 3
@@ -49,11 +49,13 @@ CAL_SCALE: Final = 1
 AVG_SAMPLE_FLAG: Final = 2
 DEFAULT_MEMO: Final = "MSG data from XRIT V2"
 
-# Block offsets. McIDAS hard-codes these; deriving them from the block sizes
-# keeps the one definition honest if a block size ever changes.
-NAV_OFFSET: Final = words.DIRECTORY_BYTES
-CAL_OFFSET: Final = NAV_OFFSET + NAV_BLOCK_BYTES
-DATA_OFFSET: Final = CAL_OFFSET + CAL_BLOCK_BYTES
+# Block offsets, in bytes from the start of the file. McIDAS hard-codes these;
+# deriving them from the block sizes keeps the one definition honest. Named
+# *_BLOCK_OFFSET to distinguish them from the words.* names of the same idea,
+# which are 1-based directory WORD numbers, not byte offsets.
+NAV_BLOCK_OFFSET: Final = words.DIRECTORY_BYTES
+CAL_BLOCK_OFFSET: Final = NAV_BLOCK_OFFSET + NAV_BLOCK_BYTES
+DATA_BLOCK_OFFSET: Final = CAL_BLOCK_OFFSET + CAL_BLOCK_BYTES
 
 SENSOR_SOURCE_NUMBERS: Final[dict[str, int]] = {
     "meteosat-8": 51,
@@ -102,7 +104,7 @@ class SeviriAreaMetadata:
     @property
     def line_bytes(self) -> int:
         """Bytes per image line. Single-band files carry no line prefix."""
-        return self.n_elements * BYTES_PER_PIXEL
+        return self.n_elements * PIXEL_BYTES
 
     @property
     def data_bytes(self) -> int:
@@ -113,7 +115,7 @@ class SeviriAreaMetadata:
     def total_bytes(self) -> int:
         """Total file size, including the trailing comment cards."""
         return (
-            DATA_OFFSET
+            DATA_BLOCK_OFFSET
             + self.data_bytes
             + len(self.comment_cards) * words.COMMENT_CARD_BYTES
         )
@@ -148,7 +150,7 @@ def build_directory(meta: SeviriAreaMetadata) -> bytes:
         words.START_ELEMENT: UPPER_LEFT_COORDINATE,
         words.NUM_LINES: meta.n_lines,
         words.NUM_ELEMENTS: meta.n_elements,
-        words.BYTES_PER_PIXEL: BYTES_PER_PIXEL,
+        words.BYTES_PER_PIXEL: PIXEL_BYTES,
         words.LINE_RESOLUTION: RESOLUTION,
         words.ELEMENT_RESOLUTION: RESOLUTION,
         words.NUM_BANDS: 1,
@@ -156,8 +158,8 @@ def build_directory(meta: SeviriAreaMetadata) -> bytes:
         words.CREATION_DATE: created_day,
         words.CREATION_TIME: created_time,
         words.BAND_MAP: 1 << (meta.band - 1),
-        words.DATA_OFFSET: DATA_OFFSET,
-        words.NAV_OFFSET: NAV_OFFSET,
+        words.DATA_OFFSET: DATA_BLOCK_OFFSET,
+        words.NAV_OFFSET: NAV_BLOCK_OFFSET,
         words.VALIDITY_CODE: 0,
         words.ACTUAL_YEAR_DAY: image_day,
         words.ACTUAL_TIME: image_time,
@@ -171,7 +173,7 @@ def build_directory(meta: SeviriAreaMetadata) -> bytes:
         words.CAL_SCALE: CAL_SCALE,
         words.AUX_OFFSET: 0,
         words.AUX_COUNT: 0,
-        words.CAL_OFFSET: CAL_OFFSET,
+        words.CAL_OFFSET: CAL_BLOCK_OFFSET,
         words.COMMENT_CARDS: len(meta.comment_cards),
     }
     values.update(words.encode_memo(meta.memo))

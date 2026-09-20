@@ -5,12 +5,17 @@ registered checker whether it recognises a file and raises ``TypeError`` when
 none does. The four built-in checkers all decline a binary AREA file, so
 without this plugin ``--compare_path`` cannot be used on our output.
 
-Two classes of difference are ignored deliberately, because they change on
-every run and say nothing about correctness: the creation date and time in
-directory words 17 and 18, and the trailing comment cards, which are an audit
-trail of the commands that produced the file. Everything else -- every other
-directory word, the navigation block, the calibration block and every pixel --
-must match exactly.
+The creation date and time in directory words 17 and 18 are ignored
+deliberately: they change on every run and say nothing about correctness.
+
+The trailing comment cards are not compared either, but their *count* in
+directory word 64 is, so two files whose audit trails differ in length do not
+match. That is deliberate -- a differing card count means the files were
+produced by different command sequences -- but it does mean this checker
+cannot accept a McIDAS-written reference, which carries cards we never write.
+
+Everything else must match exactly: every other directory word, the navigation
+block, the calibration block and every pixel.
 """
 
 from __future__ import annotations
@@ -35,8 +40,6 @@ class McidasAreaOutputCheckerPlugin(BaseOutputCheckerPlugin):
     interface = "output_checkers"
     family = "standard"
     name = "mcidas_area"
-
-    VALID_EXTENSIONS = frozenset({".area"})
 
     def correct_file_format(self, fname: str) -> bool:
         """Return whether this checker recognises a file as an AREA file.

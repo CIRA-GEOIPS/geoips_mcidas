@@ -42,8 +42,14 @@ because the local pluginify checkout carries a later, restructured version that 
 1.20.0a0 cannot import (`pluginify.interfaces.base` is gone). That later version already
 contains the fix for issue 1.
 
-With issues 1 and 2 applied, all three plugins in this package register and resolve by
-name, and `geoips list` works once issue 4 is applied.
+With issues 1 and 2 applied, all three plugins register and resolve by name. With issue 4
+applied as well, `geoips list` works and
+`geoips run order_based seviri_hrit_mcidas_area <files>` runs the whole pipeline to
+completion, producing output that matches a McIDAS-written reference pixel for pixel.
+
+Issue 4's root cause proved to be broader than a missing key: the JSON cache is named after
+its source basename alone in a per-user directory shared by every GeoIPS installation on
+the machine, so two checkouts overwrite each other's caches.
 
 ______________________________________________________________________
 

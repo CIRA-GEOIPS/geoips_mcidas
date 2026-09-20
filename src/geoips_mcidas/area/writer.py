@@ -20,13 +20,7 @@ from typing import TYPE_CHECKING, Final
 import numpy as np
 
 from geoips_mcidas.area import words
-from geoips_mcidas.area.directory import (
-    BYTES_PER_PIXEL,
-    CAL_OFFSET,
-    DATA_OFFSET,
-    NAV_OFFSET,
-    build_directory,
-)
+from geoips_mcidas.area.directory import build_directory
 from geoips_mcidas.area.msg_cal import CAL_BLOCK_BYTES
 from geoips_mcidas.area.msgt_nav import NAV_BLOCK_BYTES
 
@@ -219,11 +213,7 @@ def write_area_file(
 
 
 __all__ = [
-    "BYTES_PER_PIXEL",
-    "CAL_OFFSET",
     "COUNT_DTYPE",
-    "DATA_OFFSET",
-    "NAV_OFFSET",
     "build_area_file",
     "encode_comment_cards",
     "encode_counts",

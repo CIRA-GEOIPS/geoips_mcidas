@@ -125,9 +125,11 @@ def test_shared_words_match_the_reference(reference_directory: bytes) -> None:
     """Compare against real McIDAS output for the words that do not depend on
     band count.
 
-    The reference is the multi-band intermediate, so words 14, 15, 19 and 51
-    are deliberately excluded -- those are exactly the ones that differ in the
-    single-band files CLAVR-x actually reads.
+    The comparison is an allowlist, not an exclusion list: it asserts only the
+    words listed below. The reference is McIDAS's multi-band intermediate, so
+    the band-dependent words (14, 15, 19, 51), the creation stamps (17, 18)
+    and the comment count (64) all legitimately differ from our single-band
+    output and are therefore not listed.
     """
     theirs = words.unpack_words(reference_directory)
     ours = words.unpack_words(directory.build_directory(metadata()))

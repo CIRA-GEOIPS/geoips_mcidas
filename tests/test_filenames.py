@@ -67,3 +67,23 @@ def test_clavrx_splice_is_silent_without_a_marker() -> None:
     """Documents the failure mode we validate against: no error, bad name."""
     mangled = filenames.clavrx_sibling_filename("noband_2021_141.area", 5)
     assert mangled == "_5_band_2021_141.area"
+
+
+def test_a_prefix_that_hides_the_band_token_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prefix ending '_1' puts an earlier '_1_' in the name, so CLAVR-x
+    splices at the wrong place and looks for every band under a wrong name."""
+    monkeypatch.setitem(filenames.PLATFORM_FILE_TOKENS, "meteosat-11", "met_1")
+    with pytest.raises(ValueError, match="band token"):
+        filenames.build_area_filename("meteosat-11", OBSERVED, 1)
+
+
+def test_an_underscore_that_does_not_hide_the_token_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only an underscore that creates an earlier '_1_' matters. 'met_11'
+    yields 'met_11_1_...', whose first '_1_' is still the band token."""
+    monkeypatch.setitem(filenames.PLATFORM_FILE_TOKENS, "meteosat-11", "met_11")
+    name = filenames.build_area_filename("meteosat-11", OBSERVED, 1)
+    assert name.find(filenames.BAND_1_MARKER) == len("met_11")

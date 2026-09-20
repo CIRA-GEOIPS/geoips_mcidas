@@ -177,3 +177,18 @@ def test_directory_word_rejects_an_out_of_range_word(tmp_path: Path) -> None:
     raw = make_file(tmp_path / "a.area").read_bytes()
     with pytest.raises(ValueError, match="outside 1"):
         parse.directory_word(raw, 65)
+
+
+def test_a_differing_directory_word_is_caught(
+    tmp_path: Path,
+    checker: mcidas_area.McidasAreaOutputCheckerPlugin,
+) -> None:
+    """Guards the guard: the volatile-word allowlist must not swallow
+    everything else."""
+    a = make_file(tmp_path / "a.area")
+    raw = bytearray(a.read_bytes())
+    start = (words.SENSOR_SOURCE - 1) * words.WORD_BYTES
+    raw[start : start + 4] = (52).to_bytes(4, "little", signed=True)
+    b = tmp_path / "b.area"
+    b.write_bytes(bytes(raw))
+    assert not checker.outputs_match(str(a), str(b))

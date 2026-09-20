@@ -45,7 +45,11 @@ OFFSET_SCALE: Final = 10
 """Line/column offsets are stored multiplied by ten."""
 
 MSG_SCALING_FACTOR: Final = 13642337
-"""CFAC/LFAC as EUMETSAT defines it, in units of 2**-16 degrees per pixel."""
+"""CFAC/LFAC as EUMETSAT defines it: pixels per radian, scaled by 2**16.
+
+Dividing by 2**16 gives 208.165542 pixels per degree, which is what the stored
+word holds once multiplied by :data:`FACTOR_SCALE`.
+"""
 
 FACTOR_SCALE: Final = 1_000_000
 """Scaling factors are stored as pixels-per-degree multiplied by a million."""

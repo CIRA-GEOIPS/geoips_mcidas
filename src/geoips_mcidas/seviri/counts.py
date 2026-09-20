@@ -28,6 +28,7 @@ import numpy as np
 from geoips.plugins.classes.readers.utils.hrit_reader import HritFile
 
 from geoips_mcidas.errors import SeviriHritError
+from geoips_mcidas.seviri.dataset import CLAVRX_BANDS, MSG_BANDS
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -35,12 +36,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from numpy.typing import NDArray
-
-MSG_BANDS: Final = 12
-"""Calibration covers all twelve channels even though only eleven are read."""
-
-NARROWBAND_BANDS: Final = tuple(range(1, 12))
-"""HRV is excluded: CLAVR-x never reads it and the grid differs."""
 
 PLATFORM_NAMES: Final[dict[str, str]] = {
     "msg1": "meteosat-8",
@@ -124,6 +119,22 @@ def _reject_inconsistent(handle: HritFile, seen: dict[str, object], name: str) -
             )
 
 
+def _reject_unusable(handle: HritFile, seen: dict[str, object], name: str) -> None:
+    """Reject a file this reader cannot use, before it joins the scene.
+
+    Raises
+    ------
+    SeviriHritError
+        If the segment is compressed, or disagrees with the scene so far.
+    """
+    # Only image segments carry block_1; the prologue has no data to compress.
+    if int(handle.metadata.get("block_1", {}).get("compression", 0)) != 0:
+        raise SeviriHritError(
+            f"{name} is compressed; decompress the HRIT segments first",
+        )
+    _reject_inconsistent(handle, seen, name)
+
+
 def _group_segments(
     paths: Iterable[Path],
 ) -> tuple[HritFile | None, dict[int, dict[int, HritFile]]]:
@@ -140,13 +151,7 @@ def _group_segments(
     seen: dict[str, object] = {}
     for path in paths:
         handle = HritFile(str(path))
-        # Only image segments carry block_1; the prologue has no data to compress.
-        image_header = handle.metadata.get("block_1", {})
-        if int(image_header.get("compression", 0)) != 0:
-            raise SeviriHritError(
-                f"{path.name} is compressed; decompress the HRIT segments first",
-            )
-        _reject_inconsistent(handle, seen, path.name)
+        _reject_unusable(handle, seen, path.name)
         if handle.file_type == PROLOGUE_TYPE:
             if prologue is not None:
                 raise SeviriHritError(
@@ -154,16 +159,28 @@ def _group_segments(
                     "the calibration block would depend on file order",
                 )
             prologue = handle
-        elif handle.file_type == IMAGE_TYPE and handle.band is not None:
-            number = int(handle.band.removeprefix("B"))
-            if number in NARROWBAND_BANDS:
-                segment = int(handle.segment)
-                if segment in bands.get(number, {}):
-                    raise SeviriHritError(
-                        f"duplicate segment {segment} for band {number} ({path.name})",
-                    )
-                bands.setdefault(number, {})[segment] = handle
+        else:
+            _add_segment(bands, handle, path.name)
     return prologue, bands
+
+
+def _add_segment(bands: SegmentMap, handle: HritFile, name: str) -> None:
+    """File one image segment under its band, rejecting a duplicate.
+
+    Raises
+    ------
+    SeviriHritError
+        If this band already holds that segment number.
+    """
+    if handle.file_type != IMAGE_TYPE or handle.band is None:
+        return
+    band = int(handle.band.removeprefix("B"))
+    if band not in CLAVRX_BANDS:
+        return
+    segment = int(handle.segment)
+    if segment in bands.get(band, {}):
+        raise SeviriHritError(f"duplicate segment {segment} for band {band} ({name})")
+    bands.setdefault(band, {})[segment] = handle
 
 
 def _check_segments_complete(bands: SegmentMap, lines: int) -> None:
@@ -187,27 +204,76 @@ def _check_segments_complete(bands: SegmentMap, lines: int) -> None:
     SeviriHritError
         If any band's segments do not tile the image exactly.
     """
-    problems = {}
-    for band, segments in sorted(bands.items()):
-        block = next(iter(segments.values())).metadata["block_128"]
-        expected = set(
-            range(int(block["start_segment"]), int(block["end_segment"]) + 1)
-        )
-        if set(segments) != expected:
-            problems[band] = f"missing segments {sorted(expected - set(segments))}"
-            continue
-        heights = {
-            int(handle.metadata["block_1"]["num_lines"]) for handle in segments.values()
-        }
-        if len(heights) != 1:
-            problems[band] = f"segments differ in height: {sorted(heights)}"
-        elif heights.pop() * len(segments) != lines:
-            problems[band] = f"segments cover {len(segments)} strips, not {lines} lines"
+    problems = {
+        band: problem
+        for band, segments in sorted(bands.items())
+        if (problem := _band_problem(segments, lines)) is not None
+    }
     if problems:
         raise SeviriHritError(
             f"HRIT segments do not tile the image: {problems}. "
             "A gap would be written as zeros and calibrated as real data.",
         )
+
+
+def _band_problem(segments: dict[int, HritFile], lines: int) -> str | None:
+    """Describe why one band's segments do not tile the image, or None."""
+    declared = {
+        (
+            int(handle.metadata["block_128"]["start_segment"]),
+            int(handle.metadata["block_128"]["end_segment"]),
+        )
+        for handle in segments.values()
+    }
+    if len(declared) != 1:
+        return f"segments disagree on the range: {sorted(declared)}"
+    first, last = declared.pop()
+    if first != 1:
+        # _assemble_band places strip n at num_lines * (n - 1), so a run
+        # starting anywhere else writes past the end of the image.
+        return f"segments start at {first}, not 1"
+    present = set(segments)
+    expected = set(range(first, last + 1))
+    if present != expected:
+        return (
+            f"missing {sorted(expected - present)}, "
+            f"unexpected {sorted(present - expected)}"
+        )
+    return _height_problem(segments, lines)
+
+
+def _height_problem(segments: dict[int, HritFile], lines: int) -> str | None:
+    """Describe why the segment heights do not tile the image, or None."""
+    heights = {
+        int(handle.metadata["block_1"]["num_lines"]) for handle in segments.values()
+    }
+    if len(heights) != 1:
+        return f"segments differ in height: {sorted(heights)}"
+    if heights.pop() * len(segments) != lines:
+        return f"segments cover {len(segments)} strips, not {lines} lines"
+    return None
+
+
+def _gather(paths: Iterable[Path]) -> tuple[HritFile, SegmentMap]:
+    """Group the files and reject anything that cannot form one scene.
+
+    Raises
+    ------
+    SeviriHritError
+        For every rejection, including the ones the HRIT reader itself would
+        report as an OSError or KeyError naming no file.
+    """
+    try:
+        prologue, bands = _group_segments(paths)
+    except SeviriHritError:
+        raise
+    except (OSError, KeyError, ValueError) as exc:
+        raise SeviriHritError(f"could not read the HRIT files: {exc}") from exc
+    if prologue is None:
+        raise SeviriHritError("no HRIT prologue found; calibration is unavailable")
+    if not bands:
+        raise SeviriHritError("no HRIT image segments found")
+    return prologue, bands
 
 
 def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
@@ -226,20 +292,12 @@ def read_seviri_counts(paths: Iterable[Path]) -> SeviriCounts:
     Raises
     ------
     SeviriHritError
-        If the prologue is absent, if no image segments are present, if any
-        band's segments do not tile the full disk, or if the files span more
-        than one observation time.
+        For every rejection: an absent or duplicated prologue, no image
+        segments, a compressed segment, files disagreeing on observation time
+        or spacecraft, a duplicated segment, segments that do not tile the
+        image, and any OSError or KeyError the underlying HRIT reader raises.
     """
-    try:
-        prologue, bands = _group_segments(paths)
-    except SeviriHritError:
-        raise
-    except (OSError, KeyError, ValueError) as exc:
-        raise SeviriHritError(f"could not read the HRIT files: {exc}") from exc
-    if prologue is None:
-        raise SeviriHritError("no HRIT prologue found; calibration is unavailable")
-    if not bands:
-        raise SeviriHritError("no HRIT image segments found")
+    prologue, bands = _gather(paths)
 
     header = prologue.prologue
     grid = header["imageDescription"]["referenceGridVIS_IR"]

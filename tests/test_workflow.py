@@ -10,6 +10,7 @@ between.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -34,17 +35,23 @@ class EnvLoader(yaml.SafeLoader):
     """Resolve GeoIPS's ``!ENV`` tag to its literal text."""
 
 
-EnvLoader.add_constructor(
-    "!ENV",
-    lambda loader, node: str(loader.construct_scalar(node)),
-)
+def _resolve_env(loader: EnvLoader, node: yaml.ScalarNode) -> str:
+    """Resolve GeoIPS's !ENV tag to its literal text."""
+    return str(loader.construct_scalar(node))
+
+
+EnvLoader.add_constructor("!ENV", _resolve_env)
 
 
 @pytest.fixture(scope="module")
-def workflow() -> dict:
+def workflow() -> dict[str, Any]:
     # EnvLoader subclasses SafeLoader, so this cannot construct arbitrary
     # objects; it only teaches the safe loader about GeoIPS's !ENV tag.
-    return yaml.load(WORKFLOW.read_text(), Loader=EnvLoader)  # noqa: S506
+    loaded: dict[str, Any] = yaml.load(
+        WORKFLOW.read_text(),
+        Loader=EnvLoader,  # noqa: S506
+    )
+    return loaded
 
 
 def test_declares_this_package(workflow: dict) -> None:

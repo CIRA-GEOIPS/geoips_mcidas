@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from importlib.metadata import entry_points
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,7 +32,7 @@ def test_entry_point_is_registered() -> None:
 
 
 @pytest.mark.parametrize("plugin_class", DATATREE_NATIVE)
-def test_datatree_native_plugins_declare_no_family(plugin_class: type) -> None:
+def test_datatree_native_plugins_declare_no_family(plugin_class: Any) -> None:
     """``data_tree = True`` plus no ``family`` is the migration GeoIPS asks
     for; the interface then passes data through unconverted both ways."""
     assert plugin_class.data_tree is True

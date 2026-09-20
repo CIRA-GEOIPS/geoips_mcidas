@@ -102,7 +102,8 @@ def encode_word(value: WordValue) -> bytes:
     ------
     ValueError
         If a string is longer than four characters, or an integer does not fit
-        in a signed 32-bit word.
+        in a signed 32-bit word. A float is truncated by ``int()`` rather than
+        rejected; callers pass word values, not measurements.
     """
     if isinstance(value, str):
         encoded = value.encode("ascii")

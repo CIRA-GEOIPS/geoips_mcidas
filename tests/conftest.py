@@ -5,8 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+
+if TYPE_CHECKING:
+    from geoips_mcidas.seviri.counts import SeviriCounts
 
 REFERENCE_ENV_VAR = "GEOIPS_MCIDAS_REFERENCE_AREA"
 """Overrides the search for the reference file, e.g. in CI."""
@@ -19,7 +23,7 @@ exact failure the job exists to catch.
 """
 
 
-def _missing(what: str, env_var: str) -> None:
+def _missing(what: str, env_var: str) -> NoReturn:
     """Skip, or fail when the caller said the data must be there."""
     message = f"{what} not found; set {env_var} to enable"
     if os.environ.get(STRICT_ENV_VAR):
@@ -87,11 +91,11 @@ def sample_hrit() -> Path:
 
 
 @pytest.fixture(scope="session")
-def sample_counts(sample_hrit: Path) -> object:
+def sample_counts(sample_hrit: Path) -> SeviriCounts:
     """Counts read once per session.
 
-    Decompressing and 10-bit-unpacking 90 HRIT segments takes tens of
-    seconds; every golden test in the suite can share one result.
+    Reading and 10-bit-unpacking 90 HRIT segments takes about twenty seconds,
+    so every golden test in the suite shares one result.
     """
     pytest.importorskip("geoips")
     from geoips_mcidas.seviri.counts import read_seviri_counts

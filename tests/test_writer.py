@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -58,8 +60,10 @@ def test_blocks_are_contiguous_and_in_order() -> None:
     nav, cal = blocks()
     contents = writer.build_area_file(meta, nav, cal, ramp())
     assert contents[words.DIRECTORY_BYTES : words.DIRECTORY_BYTES + 4] == b"MSGT"
-    assert contents[directory.CAL_OFFSET : directory.CAL_OFFSET + 4] == b"MSGT"
-    assert len(contents[: directory.NAV_OFFSET]) == words.DIRECTORY_BYTES
+    assert (
+        contents[directory.CAL_BLOCK_OFFSET : directory.CAL_BLOCK_OFFSET + 4] == b"MSGT"
+    )
+    assert len(contents[: directory.NAV_BLOCK_OFFSET]) == words.DIRECTORY_BYTES
 
 
 def test_counts_are_little_endian_unsigned() -> None:
@@ -67,7 +71,9 @@ def test_counts_are_little_endian_unsigned() -> None:
     nav, cal = blocks()
     counts = ramp()
     contents = writer.build_area_file(meta, nav, cal, counts)
-    data = contents[directory.DATA_OFFSET : directory.DATA_OFFSET + counts.size * 2]
+    data = contents[
+        directory.DATA_BLOCK_OFFSET : directory.DATA_BLOCK_OFFSET + counts.size * 2
+    ]
     recovered = np.frombuffer(data, dtype="<u2").reshape(counts.shape)
     np.testing.assert_array_equal(recovered, counts)
 
@@ -144,15 +150,18 @@ def test_leaves_no_temporary_file(tmp_path: Path) -> None:
     assert [p.name for p in tmp_path.iterdir()] == ["a.area"]
 
 
-def test_temporary_file_is_unique_per_call(tmp_path: Path, monkeypatch) -> None:
+def test_temporary_file_is_unique_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A temp name derived from the destination lets two concurrent runs share
     one inode, so the process that returns success is not the one whose bytes
     land on disk."""
     seen: list[str] = []
-    real = writer.tempfile.mkstemp
+    real = tempfile.mkstemp
 
-    def record(**kwargs: object) -> tuple[int, str]:
-        handle, name = real(**kwargs)
+    def record(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        handle, name = real(*args, **kwargs)
         seen.append(name)
         return handle, name
 

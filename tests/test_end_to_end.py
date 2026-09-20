@@ -4,14 +4,15 @@ This is the whole deliverable: the reader, the blocks, the filenames and the
 writer, exercised on the same scene McIDAS-X converted.
 
 A full-disk band is ~28 MB and a scene is eleven of them, so most of these
-tests write one band at a time and delete it, keeping peak disk use to a
-single file. Only the filename test writes a whole scene, and it skips when
-the volume cannot hold one.
+tests write a single band into pytest's temporary directory, which the fixture
+removes afterwards. Only the last test writes a whole scene, and every test
+checks free space first and skips rather than failing on a full volume.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -137,6 +138,7 @@ def test_full_scene_writes_every_band(sample_counts: object, tmp_path: Path) -> 
     require_free_bytes(tmp_path, SCENE_BYTES + BAND_FILE_BYTES)
     dataset = seviri_hrit_counts.counts_to_dataset(sample_counts)  # type: ignore[arg-type]
     tree = xr.DataTree(dataset=dataset, name="DATA")
-    result = mcidas_area_seviri.PLUGIN_CLASS()(tree, tmp_path)
+    plugin: Any = mcidas_area_seviri.PLUGIN_CLASS()
+    result = plugin(tree, tmp_path)
     written = [Path(p).name for p in result.attrs["output_products"]]
     assert written == EXPECTED_NAMES

@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Final
 import xarray as xr
 from geoips.interfaces.class_based.readers import BaseReaderPlugin
 
-from geoips_mcidas.plugins.classes.output_formatters.mcidas_area_seviri import (
+from geoips_mcidas.seviri.counts import read_seviri_counts
+from geoips_mcidas.seviri.dataset import (
     GAINS_ATTR,
     OFFSETS_ATTR,
     PLATFORM_ATTR,
@@ -27,7 +28,6 @@ from geoips_mcidas.plugins.classes.output_formatters.mcidas_area_seviri import (
     SUB_LON_ATTR,
     count_variable,
 )
-from geoips_mcidas.seviri.counts import read_seviri_counts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

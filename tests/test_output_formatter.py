@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
+import xarray as xr
 
-xr = pytest.importorskip("xarray")
+pytest.importorskip("xarray")
 mcidas_area_seviri = pytest.importorskip(
     "geoips_mcidas.plugins.classes.output_formatters.mcidas_area_seviri",
 )
@@ -93,7 +95,7 @@ def test_band_counts_round_trip(tmp_path: Path) -> None:
     tree = plugin(build_tree(), tmp_path, allow_subset=True)
     for path in map(Path, tree.attrs["output_products"]):
         band = int(path.name.split("_")[1])
-        payload = path.read_bytes()[directory.DATA_OFFSET :]
+        payload = path.read_bytes()[directory.DATA_BLOCK_OFFSET :]
         counts = np.frombuffer(payload, dtype="<u2")
         assert set(counts.tolist()) == {band * 10}
 
@@ -184,21 +186,23 @@ def test_a_subset_is_refused_by_default(tmp_path: Path) -> None:
     assert list(tmp_path.glob("*.area")) == []
 
 
-def test_band_one_is_written_last(tmp_path: Path) -> None:
+def test_band_one_is_written_last(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The band-1 file is what a downstream poller keys on, so it must not
     appear until the other ten exist."""
     order: list[int] = []
     real = mcidas_area_seviri.writer.write_area_file
 
-    def record(path: Path, meta: object, *args: object) -> Path:
-        order.append(meta.band)  # type: ignore[attr-defined]
-        return real(path, meta, *args)  # type: ignore[arg-type]
+    def record(path: Path, meta: Any, *args: Any) -> Path:
+        order.append(meta.band)
+        written: Path = real(path, meta, *args)
+        return written
 
-    mcidas_area_seviri.writer.write_area_file = record  # type: ignore[assignment]
-    try:
-        mcidas_area_seviri.PLUGIN_CLASS()(build_tree(), tmp_path, allow_subset=True)
-    finally:
-        mcidas_area_seviri.writer.write_area_file = real  # type: ignore[assignment]
+    monkeypatch.setattr(mcidas_area_seviri.writer, "write_area_file", record)
+    plugin = mcidas_area_seviri.PLUGIN_CLASS()
+    plugin(build_tree(), tmp_path, allow_subset=True)
 
     assert order[-1] == 1
     assert sorted(order) == list(range(1, 12))
@@ -215,7 +219,10 @@ def test_rejects_an_unusable_output_directory(bad: str) -> None:
         mcidas_area_seviri.PLUGIN_CLASS()(build_tree(), bad, allow_subset=True)
 
 
-def test_band_one_does_not_survive_a_rerun(tmp_path: Path) -> None:
+def test_band_one_does_not_survive_a_rerun(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Band 1's presence is the readiness signal, so a previous run's copy must
     not stand in for this run's.
 
@@ -231,17 +238,15 @@ def test_band_one_does_not_survive_a_rerun(tmp_path: Path) -> None:
     real = mcidas_area_seviri.writer.write_area_file
     calls = {"n": 0}
 
-    def fail_partway(*args: object, **kwargs: object) -> Path:
+    def fail_partway(*args: Any, **kwargs: Any) -> Path:
         calls["n"] += 1
         if calls["n"] > 3:
             raise RuntimeError("interrupted")
-        return real(*args, **kwargs)  # type: ignore[arg-type]
+        written: Path = real(*args, **kwargs)
+        return written
 
-    mcidas_area_seviri.writer.write_area_file = fail_partway  # type: ignore[assignment]
-    try:
-        with pytest.raises(RuntimeError, match="interrupted"):
-            plugin(build_tree(), tmp_path, allow_subset=True)
-    finally:
-        mcidas_area_seviri.writer.write_area_file = real  # type: ignore[assignment]
+    monkeypatch.setattr(mcidas_area_seviri.writer, "write_area_file", fail_partway)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        plugin(build_tree(), tmp_path, allow_subset=True)
 
     assert not band_1.exists(), "a stale band 1 would advertise an incomplete set"

@@ -32,6 +32,16 @@ from geoips_mcidas.area.directory import (
 )
 from geoips_mcidas.area.filenames import build_area_filename
 from geoips_mcidas.errors import MissingBandsError
+from geoips_mcidas.seviri.dataset import (
+    CLAVRX_BANDS,
+    GAINS_ATTR,
+    OFFSETS_ATTR,
+    PLATFORM_ATTR,
+    REQUIRED_ATTRS,
+    START_TIME_ATTR,
+    SUB_LON_ATTR,
+    count_variable,
+)
 from geoips_mcidas.seviri.scene import SeviriScene
 
 if TYPE_CHECKING:
@@ -41,23 +51,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 LOG: Final = logging.getLogger(__name__)
-
-CLAVRX_BANDS: Final = tuple(range(1, 12))
-"""The eleven narrowband channels CLAVR-x reads. HRV is never used."""
-
-COUNT_VARIABLE_TEMPLATE: Final = "B{band:02d}Cnt"
-"""Raw-count variable names, following the reader's ``B01Rad`` convention."""
-
-GAINS_ATTR: Final = "seviri_calibration_gains"
-OFFSETS_ATTR: Final = "seviri_calibration_offsets"
-SUB_LON_ATTR: Final = "longitude_of_projection_origin"
-PLATFORM_ATTR: Final = "platform_name"
-START_TIME_ATTR: Final = "start_datetime"
-
-
-def count_variable(band: int) -> str:
-    """Return the raw-count variable name for an MSG band."""
-    return COUNT_VARIABLE_TEMPLATE.format(band=band)
 
 
 def resolve_counts_dataset(tree: xr.DataTree) -> xr.Dataset:
@@ -115,15 +108,6 @@ def collect_counts(dataset: xr.Dataset) -> dict[int, NDArray[np.integer]]:
         for band in CLAVRX_BANDS
         if count_variable(band) in dataset
     }
-
-
-REQUIRED_ATTRS: Final = (
-    PLATFORM_ATTR,
-    START_TIME_ATTR,
-    SUB_LON_ATTR,
-    GAINS_ATTR,
-    OFFSETS_ATTR,
-)
 
 
 def require_attrs(attrs: Mapping[Hashable, Any]) -> None:
@@ -280,7 +264,7 @@ def write_seviri_bands(
         )
         first.unlink(missing_ok=True)
 
-    written: list[str] = []
+    written: dict[int, str] = {}
     for band in ordered:
         image = counts[band]
         meta = SeviriAreaMetadata(
@@ -302,13 +286,8 @@ def write_seviri_bands(
         )
         writer.write_area_file(path, meta, nav_block, cal_block, image)
         LOG.info("Wrote %s", path)
-        written.append(str(path))
-    return sorted(written, key=_band_in_name)
-
-
-def _band_in_name(path: str) -> int:
-    """Sort written paths back into band order for reporting."""
-    return int(Path(path).name.split("_")[1])
+        written[band] = str(path)
+    return [written[band] for band in sorted(written)]
 
 
 class McidasAreaSeviriOutputFormatterPlugin(BaseOutputFormatterPlugin):

@@ -60,8 +60,8 @@ def test_unknown_platform_is_rejected() -> None:
 
 def test_hrv_is_excluded() -> None:
     """CLAVR-x never reads HRV and its grid differs from the narrowbands."""
-    assert 12 not in seviri_counts.NARROWBAND_BANDS
-    assert len(seviri_counts.NARROWBAND_BANDS) == NARROWBAND_COUNT
+    assert 12 not in seviri_counts.CLAVRX_BANDS
+    assert len(seviri_counts.CLAVRX_BANDS) == NARROWBAND_COUNT
 
 
 def test_missing_prologue_is_reported(tmp_path: Path) -> None:

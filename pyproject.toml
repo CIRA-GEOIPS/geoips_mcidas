@@ -26,7 +26,7 @@ dependencies = ["numpy>=1.24"]
 # importable and testable on its own, which keeps the binary-format unit tests
 # runnable in CI without the whole scientific stack.
 geoips = ["geoips>=1.20.0", "xarray>=2025.3.1"]
-lint = ["ruff", "mypy", "pre-commit"]
+lint = ["ruff", "mypy", "pre-commit", "types-PyYAML"]
 # pyyaml is a test dependency: tests/test_workflow.py parses the shipped
 # workflow YAML. It is not a transitive dependency of pytest.
 test = ["pytest", "pytest-cov", "pytest-timeout", "pyyaml"]
@@ -53,6 +53,8 @@ select = [
     "UP",           # pyupgrade
     "B",            # flake8-bugbear
     "C4",           # flake8-comprehensions
+    "C90",          # mccabe complexity -- without this the max-complexity
+    #                 setting below is configured but never enforced
     "SIM",          # flake8-simplify
     "ARG",          # flake8-unused-arguments
     "ERA",          # eradicate
@@ -90,8 +92,7 @@ ban-relative-imports = "all"
 # for annotations; a TYPE_CHECKING block per test file is pure noise.
 # Tests assert, use magic numbers as fixtures, import types at runtime for
 # annotations, and defer optional-dependency imports until importorskip has
-# had a chance to run -- which also means some imports follow
-# pytest.importorskip rather than sitting at the top of the file.
+# run -- which also puts some imports below the top of the file.
 "tests/**/*" = ["S101", "PLR2004", "D", "TC", "PLC0415", "E402"]
 "__init__.py" = ["F401"]
 
@@ -119,7 +120,7 @@ warn_no_return = true
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["geoips.*", "xarray.*"]
+module = ["geoips.*", "xarray.*", "pluginify.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

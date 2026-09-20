@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 import numpy as np
 
 from geoips_mcidas.area.words import WORD_BYTES
+from geoips_mcidas.seviri.dataset import MSG_BANDS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -35,9 +36,6 @@ CAL_RECORD_BYTES: Final = 104
 
 FIELD_WIDTH: Final = 17
 FIELD_DECIMALS: Final = 10
-MSG_BANDS: Final = 12
-"""Eleven narrowband channels plus HRV."""
-
 DEFAULT_PCP_FLAG: Final = 2
 """Planned-channel-processing flag written for every channel by default."""
 
@@ -156,6 +154,27 @@ def _record(
     return text.encode("ascii")
 
 
+def _validated_flags(pcp_flags: Sequence[int] | None) -> Sequence[int]:
+    """Return channel-processing flags that will not resize the block.
+
+    Each flag is written as four copies of a single character, so a wider
+    value lengthens the slice assignment and the block grows past
+    :data:`CAL_BLOCK_BYTES`.
+
+    Raises
+    ------
+    ValueError
+        If the count is wrong or any flag is not a single digit.
+    """
+    flags = pcp_flags if pcp_flags is not None else [DEFAULT_PCP_FLAG] * MSG_BANDS
+    single_digit = range(10)
+    if len(flags) != MSG_BANDS or any(flag not in single_digit for flag in flags):
+        raise ValueError(
+            f"expected {MSG_BANDS} single-digit channel-processing flags, got {flags}",
+        )
+    return flags
+
+
 def build_msg_cal_block(
     gains: Sequence[float],
     offsets: Sequence[float],
@@ -194,11 +213,7 @@ def build_msg_cal_block(
     if len(gains) != MSG_BANDS or len(offsets) != MSG_BANDS:
         raise ValueError(f"expected {MSG_BANDS} gains and offsets")
     table = planck or {}
-    flags = pcp_flags if pcp_flags is not None else [DEFAULT_PCP_FLAG] * MSG_BANDS
-    if len(flags) != MSG_BANDS or any(not 0 <= flag <= 9 for flag in flags):  # noqa: PLR2004
-        raise ValueError(
-            f"expected {MSG_BANDS} single-digit channel-processing flags, got {flags}",
-        )
+    flags = _validated_flags(pcp_flags)
 
     block = bytearray(CAL_BLOCK_BYTES)
     block[:WORD_BYTES] = CAL_TAG.encode("ascii")

@@ -70,29 +70,23 @@ arithmetic — Fortran does that to an `E` literal assigned to a double precisio
 parameter, and skipping it makes every one of the 32 Planck fields differ in the
 eighth significant figure.
 
-## Known blocker: registry metadata for DataTree-native plugins
+## Upstream patches this package depends on
 
 The reader and output formatter are DataTree-native — `data_tree = True` and no
-`family` — which is the migration GeoIPS's own interface recommends
-(`geoips/interfaces/class_based/output_formatters.py`). The interface handles
-them correctly: `_pre_call` and `_post_call` pass data through unconverted, and
-`output_products` set on the returned tree reaches the order-based procflow.
+`family` — which is the migration GeoIPS's own interface recommends. Registering
+them needs two one-line changes to `pluginify` 1.0.0, and the `geoips` CLI needs
+a third fix before `geoips run order_based` works at all.
 
-Building the plugin registry does not yet work, for one line in
-`pluginify` 1.0.0, `create_plugin_registries.collect_class_plugin_metadata`:
+All are written, verified, and on branches alongside this repository. See
+[GEOIPS_ISSUES.md](GEOIPS_ISSUES.md) for the reproductions and patch status.
+Without them, these plugins can still be imported and called directly, but not
+resolved by name — `tests/test_plugin_registration.py` skips rather than fails
+on an unpatched install.
 
-```python
-"family": plugin_class.family,       # AttributeError on a family-less plugin
+With them applied, the full pipeline runs:
+
+```sh
+geoips run order_based seviri_hrit_mcidas_area /path/to/H-000-MSG4*
 ```
 
-`getattr(plugin_class, "family", None)` is sufficient; with that change the
-whole registry builds. The surrounding code already carries a `NOTE` observing
-that attribute checks are missing here.
-
-Until that lands, these plugins have to be imported and invoked directly rather
-than resolved by name through `geoips.interfaces`. `tests/test_plugin_registration.py`
-carries a strict `xfail` that flips to passing once the fix is in.
-
-Separately, the `geoips` CLI in the pinned checkout raises
-`KeyError: 'geoips_config_create'` for every subcommand, so
-`geoips config create-registries` and `geoips list` are unavailable regardless.
+and produces eleven pixel-exact AREA files.

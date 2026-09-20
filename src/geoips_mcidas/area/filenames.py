@@ -16,8 +16,11 @@ modes, both silent:
 * If it contains no ``"_1_"`` at all, Fortran's ``index`` returns 0 and the
   splice produces a corrupt name with no error raised.
 
-:func:`build_area_filename` therefore validates its own output against
-:func:`clavrx_sibling_filename`, a direct transcription of the CLAVR-x logic.
+:func:`build_area_filename` therefore checks, for band 1 only, that the band
+token really is the first ``"_1_"`` in the name. Band 1 is the only name CLAVR-x
+is given, so it is the only one whose splice point matters.
+:func:`clavrx_sibling_filename` is a direct transcription of the CLAVR-x logic,
+and the tests use it to confirm the two agree for all eleven bands.
 """
 
 from __future__ import annotations

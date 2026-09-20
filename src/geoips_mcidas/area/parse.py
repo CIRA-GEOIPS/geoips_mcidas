@@ -25,20 +25,6 @@ class AreaBlocks(NamedTuple):
     comments: bytes
 
 
-def is_area_file(raw: bytes) -> bool:
-    """Return whether a byte string starts with a plausible AREA directory.
-
-    The test is McIDAS's own: word 2 holds the format version, always 4.
-    Because AREA files are written in host byte order with no marker, a
-    big-endian file simply fails this test -- which is exactly how CLAVR-x
-    ends up ignoring one rather than reporting it.
-    """
-    if len(raw) < MIN_AREA_BYTES:
-        return False
-    version = words.decode_word(raw[4:8])
-    return version == words.VERSION_NUMBER
-
-
 def directory_word(raw: bytes, word: int) -> int:
     """Read one 1-based directory word as a signed integer.
 
@@ -54,6 +40,19 @@ def directory_word(raw: bytes, word: int) -> int:
         raise ValueError(f"word {word} outside 1..{words.DIRECTORY_WORDS}")
     start = (word - 1) * words.WORD_BYTES
     return words.decode_word(raw[start : start + words.WORD_BYTES])
+
+
+def is_area_file(raw: bytes) -> bool:
+    """Return whether a byte string starts with a plausible AREA directory.
+
+    The test is McIDAS's own: word 2 holds the format version, always 4.
+    Because AREA files are written in host byte order with no marker, a
+    big-endian file simply fails this test -- which is exactly how CLAVR-x
+    ends up ignoring one rather than reporting it.
+    """
+    if len(raw) < MIN_AREA_BYTES:
+        return False
+    return directory_word(raw, words.VERSION) == words.VERSION_NUMBER
 
 
 def parse_area_file(raw: bytes) -> AreaBlocks:
@@ -95,6 +94,36 @@ def parse_area_file(raw: bytes) -> AreaBlocks:
     )
 
 
+def _check_offsets(
+    size: int,
+    nav_offset: int,
+    cal_offset: int,
+    data_offset: int,
+) -> None:
+    """Reject offsets outside the file or out of block order.
+
+    Raises
+    ------
+    ValueError
+        Naming the first offset that is wrong.
+    """
+    for name, offset in (
+        ("navigation", nav_offset),
+        ("calibration", cal_offset),
+        ("data", data_offset),
+    ):
+        if not 0 <= offset <= size:
+            raise ValueError(
+                f"{name} offset {offset} outside the file (length {size})",
+            )
+    present = [offset for offset in (nav_offset, cal_offset, data_offset) if offset]
+    if present != sorted(present):
+        raise ValueError(
+            f"block offsets are not in order: nav {nav_offset}, "
+            f"cal {cal_offset}, data {data_offset}",
+        )
+
+
 def _check_consistent(
     raw: bytes,
     nav_offset: int,
@@ -118,21 +147,7 @@ def _check_consistent(
     """
     if n_cards < 0:
         raise ValueError(f"negative comment card count: {n_cards}")
-    for name, offset in (
-        ("navigation", nav_offset),
-        ("calibration", cal_offset),
-        ("data", data_offset),
-    ):
-        if not 0 <= offset <= len(raw):
-            raise ValueError(
-                f"{name} offset {offset} outside the file (length {len(raw)})",
-            )
-    present = [o for o in (nav_offset, cal_offset, data_offset) if o]
-    if present != sorted(present):
-        raise ValueError(
-            f"block offsets are not in order: nav {nav_offset}, "
-            f"cal {cal_offset}, data {data_offset}",
-        )
+    _check_offsets(len(raw), nav_offset, cal_offset, data_offset)
 
     line_bytes = directory_word(raw, words.PREFIX_BYTES) + (
         directory_word(raw, words.NUM_ELEMENTS)
