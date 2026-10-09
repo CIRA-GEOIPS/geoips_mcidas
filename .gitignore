@@ -13,3 +13,5 @@ htmlcov/
 result
 result-*
 *.area
+.build-venv/
+*.spec

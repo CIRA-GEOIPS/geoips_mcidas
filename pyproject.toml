@@ -31,6 +31,9 @@ lint = ["ruff", "mypy", "pre-commit", "types-PyYAML"]
 # workflow YAML. It is not a transitive dependency of pytest.
 test = ["pytest", "pytest-cov", "pytest-timeout", "pyyaml"]
 
+[project.scripts]
+seviri2area = "geoips_mcidas.cli:main"
+
 [project.entry-points."geoips.plugin_packages"]
 geoips_mcidas = "geoips_mcidas"
 

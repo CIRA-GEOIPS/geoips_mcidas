@@ -16,6 +16,8 @@ mcidas_area_seviri = pytest.importorskip(
 )
 
 from geoips_mcidas.area import directory, words
+from geoips_mcidas.errors import MissingBandsError
+from geoips_mcidas.seviri import area_files
 
 OBSERVED = datetime(2021, 5, 21, 1, 0, tzinfo=UTC)
 SMALL = 4
@@ -116,10 +118,10 @@ def test_missing_bands_fail_before_writing(
     """CLAVR-x exits mid-run on a file it cannot open, naming a path we never
     wrote. Failing here names the bands instead."""
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
-    with pytest.raises(mcidas_area_seviri.MissingBandsError, match=r"\[1"):
+    with pytest.raises(MissingBandsError, match=r"\[1"):
         plugin(build_tree(present), tmp_path, allow_subset=True)
     assert list(tmp_path.glob("*.area")) == []
-    with pytest.raises(mcidas_area_seviri.MissingBandsError) as excinfo:
+    with pytest.raises(MissingBandsError) as excinfo:
         mcidas_area_seviri.check_band_coverage(set(present))
     assert missing in str(excinfo.value)
 
@@ -193,14 +195,14 @@ def test_band_one_is_written_last(
     """The band-1 file is what a downstream poller keys on, so it must not
     appear until the other ten exist."""
     order: list[int] = []
-    real = mcidas_area_seviri.writer.write_area_file
+    real = area_files.writer.write_area_file
 
     def record(path: Path, meta: Any, *args: Any) -> Path:
         order.append(meta.band)
         written: Path = real(path, meta, *args)
         return written
 
-    monkeypatch.setattr(mcidas_area_seviri.writer, "write_area_file", record)
+    monkeypatch.setattr(area_files.writer, "write_area_file", record)
     plugin = mcidas_area_seviri.PLUGIN_CLASS()
     plugin(build_tree(), tmp_path, allow_subset=True)
 
@@ -235,7 +237,7 @@ def test_band_one_does_not_survive_a_rerun(
     band_1 = tmp_path / "met11_1_2021_141_0100.area"
     assert band_1.exists()
 
-    real = mcidas_area_seviri.writer.write_area_file
+    real = area_files.writer.write_area_file
     calls = {"n": 0}
 
     def fail_partway(*args: Any, **kwargs: Any) -> Path:
@@ -245,7 +247,7 @@ def test_band_one_does_not_survive_a_rerun(
         written: Path = real(*args, **kwargs)
         return written
 
-    monkeypatch.setattr(mcidas_area_seviri.writer, "write_area_file", fail_partway)
+    monkeypatch.setattr(area_files.writer, "write_area_file", fail_partway)
     with pytest.raises(RuntimeError, match="interrupted"):
         plugin(build_tree(), tmp_path, allow_subset=True)
 
